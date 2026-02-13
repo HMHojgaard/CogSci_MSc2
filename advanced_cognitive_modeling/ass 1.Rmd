@@ -221,9 +221,9 @@ feedback_P_wsls[trials] <- ifelse(P_wsls_choices[trials] == wsls_choices[trials]
 # Create dataframe
 df_vs_wsls <- tibble(
   trial = 1:trials,
-  Self_WSLS = wsls1_choices,
-  Opponent_WSLS = wsls2_choices,
-  Feedback = feedback_wsls1 # 1 if Self_WSLS won
+  Self_P_WSLS = P_wsls_choices,
+  Opponent_WSLS = wsls_choices,
+  Feedback = feedback_P_wsls # 1 if Self_WSLS won
 ) %>% mutate(
   Cumulative_Performance = cumsum(Feedback) / row_number()
 )
@@ -234,23 +234,23 @@ df_vs_wsls <- tibble(
 
 # Plot choices over time
 p_choices_biased <- ggplot(df_vs_biased, aes(x = trial)) +
-  geom_line(aes(y = Self_WSLS, color = "WSLS_v Agent")) +
+  geom_line(aes(y = Self_P_WSLS, color = "P_WSLS Agent")) +
   geom_line(aes(y = Opponent_Random + 0.05, color = "Biased Opponent"), linetype = "dashed") + # Offset slightly
-  labs(title = "WSLS_v vs. Biased Random", y = "Choice (0/1)") + theme_classic() + ylim(-0.1, 1.1)
+  labs(title = "P_WSLS vs. Biased Random", y = "Choice (0/1)") + theme_classic() + ylim(-0.1, 1.1)
 
 p_choices_wsls <- ggplot(df_vs_wsls, aes(x = trial)) +
-  geom_line(aes(y = Self_WSLS, color = "WSLS Agent_v 1")) +
-  geom_line(aes(y = Opponent_WSLS + 0.05, color = "WSLS Agent_v 2"), linetype = "dashed") + # Offset slightly
-  labs(title = "WSLS_v vs. WSLS_v", y = "Choice (0/1)") + theme_classic() + ylim(-0.1, 1.1)
+  geom_line(aes(y = Self_P_WSLS, color = "P_WSLS Agent")) +
+  geom_line(aes(y = Opponent_WSLS + 0.05, color = "WSLS Agent"), linetype = "dashed") + # Offset slightly
+  labs(title = "P_WSLS vs. WSLS", y = "Choice (0/1)") + theme_classic() + ylim(-0.1, 1.1)
 
 # Plot cumulative performance
 p_perf_biased <- ggplot(df_vs_biased, aes(x = trial, y = Cumulative_Performance)) +
   geom_line(color = "blue", size = 1) + geom_hline(yintercept = 0.5, linetype = "dashed") +
-  labs(title = "WSLS_v Performance vs. Biased Random", y = "Proportion Wins") + theme_classic() + ylim(0, 1)
+  labs(title = "P_WSLS Performance vs. Biased Random", y = "Proportion Wins") + theme_classic() + ylim(0, 1)
 
 p_perf_wsls <- ggplot(df_vs_wsls, aes(x = trial, y = Cumulative_Performance)) +
   geom_line(color = "purple", size = 1) + geom_hline(yintercept = 0.5, linetype = "dashed") +
-  labs(title = "WSLS_v Performance vs. WSLS_v", y = "Proportion Wins") + theme_classic() + ylim(0, 1)
+  labs(title = "P_WSLS Performance vs. WSLS", y = "Proportion Wins") + theme_classic() + ylim(0, 1)
 
 # Arrange plots
 (p_choices_biased | p_choices_wsls) / (p_perf_biased | p_perf_wsls) +
