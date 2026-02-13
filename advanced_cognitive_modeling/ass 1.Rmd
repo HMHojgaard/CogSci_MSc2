@@ -1,0 +1,386 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+# Load necessary packages
+# patchwork helps combine multiple plots
+pacman::p_load(tidyverse, patchwork)
+
+# Number of trials per simulation
+trials <- 120  
+
+# Number of agents to simulate
+agents <- 100  
+
+# Optional: Set random seed for reproducibility
+# set.seed(123)
+```
+
+
+```{r}
+#' Random Agent Function
+#'
+#' Generates a sequence of choices based on a fixed probability (rate).
+#' Includes optional noise causing random 50/50 choices.
+#'
+#' @param n_trials Integer, the number of choices to generate.
+#' @param rate Numeric, the probability (0-1) of choosing option 1 ('right').
+#' @param noise Numeric, the probability (0-1) of making a random 50/50 choice
+#'   instead of following the rate. Default is 0 (no noise).
+#'
+#' @return A numeric vector of choices (0s and 1s).
+#'
+RandomAgent_f <- function(n_trials, rate = 0.5, noise = 0) {
+  # Input validation
+  if (!is.numeric(rate) || rate < 0 || rate > 1) {
+    stop("Rate must be a probability between 0 and 1.")
+  }
+  if (!is.numeric(noise) || noise < 0 || noise > 1) {
+    stop("Noise must be a probability between 0 and 1.")
+  }
+
+  # Generate base choices according to the rate
+  choices <- rbinom(n_trials, size = 1, prob = rate)
+
+  # Apply noise: identify trials where noise occurs
+  noise_trials <- rbinom(n_trials, size = 1, prob = noise) == 1
+
+  # Replace choices with random 50/50 on noise trials
+  if (any(noise_trials)) {
+    choices[noise_trials] <- rbinom(sum(noise_trials), size = 1, prob = 0.5)
+  }
+
+  return(choices)
+}
+
+# Example usage:
+example_choices <- RandomAgent_f(n_trials = 10, rate = 0.7, noise = 0.1)
+
+print(paste("Example choices (rate=0.7, noise=0.1):", paste(example_choices, collapse = " ")))
+```
+
+
+
+```{r}
+#' Win-Stay-Lose-Shift Agent Function
+#'
+#' Determines the next choice based on the previous choice and its outcome (feedback).
+#' Includes optional noise.
+#'
+#' @param prevChoice Numeric, the agent's choice on the previous trial (0 or 1).
+#' @param feedback Numeric, the outcome of the previous trial (1 for win, 0 for loss).
+#' @param noise Numeric, the probability (0-1) of making a random 50/50 choice. Default is 0.
+#'
+#' @return Numeric, the agent's next choice (0 or 1).
+#'
+WSLS_V_Agent_f <- function(prevChoice, feedback, noise = 0) {
+  # Input validation
+  if (!prevChoice %in% c(0, 1)) stop("Previous choice must be 0 or 1.")
+  if (!feedback %in% c(0, 1)) stop("Feedback must be 0 or 1.")
+  if (!is.numeric(noise) || noise < 0 || noise > 1) stop("Noise must be a probability between 0 and 1.")
+
+  # Core WSLS logic:
+  # If feedback is 1 (win), stay: choice = prevChoice
+  # If feedback is 0 (loss), shift: choice = 1 - prevChoice
+  choice <- ifelse(feedback == 1, sample(c(prevChoice, 1-prevChoice), 1, prob = c(0.8,0.2)), sample(c(prevChoice, 1-prevChoice), 1, prob = c(0.1,0.9)))
+  
+
+  # Apply noise if specified
+  if (noise > 0 && runif(1) < noise) {
+    # Override with a random 50/50 choice
+    choice <- sample(c(0, 1), 1)
+  }
+
+  return(choice)
+}
+
+# Example usage:
+# Won previous trial (feedback=1) after choosing 1:
+print(paste("Next choice after win (chose 1):", WSLSAgent_f(prevChoice = 1, feedback = 1)))
+```
+
+```{r}
+#' Win-Stay-Lose-Shift Agent Function
+#'
+#' Determines the next choice based on the previous choice and its outcome (feedback).
+#' Includes optional noise.
+#'
+#' @param prevChoice Numeric, the agent's choice on the previous trial (0 or 1).
+#' @param feedback Numeric, the outcome of the previous trial (1 for win, 0 for loss).
+#' @param noise Numeric, the probability (0-1) of making a random 50/50 choice. Default is 0.
+#'
+#' @return Numeric, the agent's next choice (0 or 1).
+#'
+WSLSAgent_f <- function(prevChoice, feedback, noise = 0) {
+  # Input validation
+  if (!prevChoice %in% c(0, 1)) stop("Previous choice must be 0 or 1.")
+  if (!feedback %in% c(0, 1)) stop("Feedback must be 0 or 1.")
+  if (!is.numeric(noise) || noise < 0 || noise > 1) stop("Noise must be a probability between 0 and 1.")
+
+  # Core WSLS logic:
+  # If feedback is 1 (win), stay: choice = prevChoice
+  # If feedback is 0 (loss), shift: choice = 1 - prevChoice
+  choice <- ifelse(feedback == 1, prevChoice, 1-prevChoice)
+  
+
+  # Apply noise if specified
+  if (noise > 0 && runif(1) < noise) {
+    # Override with a random 50/50 choice
+    choice <- sample(c(0, 1), 1)
+  }
+
+  return(choice)
+}
+
+# Example usage:
+# Won previous trial (feedback=1) after choosing 1:
+print(paste("Next choice after win (chose 1):", WSLSAgent_f(prevChoice = 1, feedback = 1)))
+```
+```
+
+
+
+```{r}
+# --- Simulation Setup ---
+trials <- 100
+
+
+```
+
+```{r}
+# --- Simulation 1: WSLS vs. Biased Random Agent ---
+cat("Simulating WSLS vs. Biased Random (Rate = 0.8)...\n")
+
+# Opponent always chooses 'right' with 80% probability
+opponent_choices_biased <- RandomAgent_f(n_trials = trials, rate = 0.8, noise = 0)
+
+# Initialize vectors for WSLS agent
+wsls_choices_vs_biased <- rep(NA, trials)
+feedback_vs_biased <- rep(NA, trials)
+
+# First choice is random
+wsls_choices_vs_biased[1] <- sample(c(0, 1), 1)
+
+# Simulation loop
+for (t in 2:trials) {
+  # Determine feedback from previous trial (WSLS wins if choices match opponent)
+  # Note: In Matching Pennies, win condition depends on role (Guesser/Director).
+  # Here we assume the WSLS agent is the 'Guesser' for simplicity.
+  prev_feedback <- ifelse(wsls_choices_vs_biased[t - 1] == opponent_choices_biased[t - 1], 1, 0)
+  feedback_vs_biased[t - 1] <- prev_feedback # Store feedback for analysis
+
+  # WSLS agent makes choice based on previous feedback
+  wsls_choices_vs_biased[t] <- WSLSAgent_f(
+    prevChoice = wsls_choices_vs_biased[t - 1],
+    feedback = prev_feedback,
+    noise = 0 # Assuming no noise for this simulation
+  )
+}
+# Record feedback for the last trial
+feedback_vs_biased[trials] <- ifelse(wsls_choices_vs_biased[trials] == opponent_choices_biased[trials], 1, 0)
+
+# Create dataframe for analysis
+df_vs_biased <- tibble(
+  trial = 1:trials,
+  Self_WSLS = wsls_choices_vs_biased,
+  Opponent_Random = opponent_choices_biased,
+  Feedback = feedback_vs_biased # 1 if WSLS won
+) %>% mutate(
+  Cumulative_Performance = cumsum(Feedback) / row_number()
+)
+
+```
+
+
+
+```{r}
+# --- Simulation 2: WSLS vs. WSLS ---
+# (Opponent plays WSLS but tries to mismatch - feedback is inverted)
+cat("Simulating WSLS vs. WSLS...\n")
+
+wsls1_choices <- rep(NA, trials)
+wsls2_choices <- rep(NA, trials)
+feedback_wsls1 <- rep(NA, trials) # Feedback for agent 1
+
+wsls1_choices[1] <- sample(c(0, 1), 1)
+wsls2_choices[1] <- sample(c(0, 1), 1)
+
+for (t in 2:trials) {
+  # Feedback for agent 1 from previous trial (wins if match)
+  prev_feedback1 <- ifelse(wsls1_choices[t - 1] == wsls2_choices[t - 1], 1, 0)
+  feedback_wsls1[t - 1] <- prev_feedback1
+
+  # Feedback for agent 2 (opponent) is the opposite (wins if mismatch)
+  prev_feedback2 <- 1 - prev_feedback1
+
+  # Both agents choose based on their own previous feedback
+  wsls1_choices[t] <- WSLSAgent_V_f(wsls1_choices[t - 1], prev_feedback1, noise = 0)
+  wsls2_choices[t] <- WSLSAgent_f(wsls2_choices[t - 1], prev_feedback2, noise = 0)
+}
+feedback_wsls1[trials] <- ifelse(wsls1_choices[trials] == wsls2_choices[trials], 1, 0)
+
+# Create dataframe
+df_vs_wsls <- tibble(
+  trial = 1:trials,
+  Self_WSLS = wsls1_choices,
+  Opponent_WSLS = wsls2_choices,
+  Feedback = feedback_wsls1 # 1 if Self_WSLS won
+) %>% mutate(
+  Cumulative_Performance = cumsum(Feedback) / row_number()
+)
+
+# --- Visualize Simulation Results ---
+
+
+
+# Plot choices over time
+p_choices_biased <- ggplot(df_vs_biased, aes(x = trial)) +
+  geom_line(aes(y = Self_WSLS, color = "WSLS_v Agent")) +
+  geom_line(aes(y = Opponent_Random + 0.05, color = "Biased Opponent"), linetype = "dashed") + # Offset slightly
+  labs(title = "WSLS_v vs. Biased Random", y = "Choice (0/1)") + theme_classic() + ylim(-0.1, 1.1)
+
+p_choices_wsls <- ggplot(df_vs_wsls, aes(x = trial)) +
+  geom_line(aes(y = Self_WSLS, color = "WSLS Agent_v 1")) +
+  geom_line(aes(y = Opponent_WSLS + 0.05, color = "WSLS Agent_v 2"), linetype = "dashed") + # Offset slightly
+  labs(title = "WSLS_v vs. WSLS_v", y = "Choice (0/1)") + theme_classic() + ylim(-0.1, 1.1)
+
+# Plot cumulative performance
+p_perf_biased <- ggplot(df_vs_biased, aes(x = trial, y = Cumulative_Performance)) +
+  geom_line(color = "blue", size = 1) + geom_hline(yintercept = 0.5, linetype = "dashed") +
+  labs(title = "WSLS_v Performance vs. Biased Random", y = "Proportion Wins") + theme_classic() + ylim(0, 1)
+
+p_perf_wsls <- ggplot(df_vs_wsls, aes(x = trial, y = Cumulative_Performance)) +
+  geom_line(color = "purple", size = 1) + geom_hline(yintercept = 0.5, linetype = "dashed") +
+  labs(title = "WSLS_v Performance vs. WSLS_v", y = "Proportion Wins") + theme_classic() + ylim(0, 1)
+
+# Arrange plots
+(p_choices_biased | p_choices_wsls) / (p_perf_biased | p_perf_wsls) +
+  plot_layout(guides = "collect") + theme(legend.position = "bottom")
+```
+
+```{r}
+#' Run Matching Pennies Simulation
+#'
+#' Simulates a full game between an Agent (Subject) and an Opponent.
+#'
+#' @param n_trials Integer, number of trials.
+#' @param agent_strategy String, "WSLS" or "Random".
+#' @param agent_params List, parameters for the agent (e.g., list(noise=0.1)).
+#' @param opponent_strategy String, "WSLS" or "Random".
+#' @param opponent_params List, parameters for the opponent (e.g., list(rate=0.8)).
+#'
+#' @return A tibble with trial-by-trial choices and outcomes.
+#'
+run_simulation <- function(n_trials, agent_strategy, agent_params, opponent_strategy, opponent_params) {
+
+  # Pre-allocate vectors for speed
+  agent_choices <- rep(NA, n_trials)
+  opponent_choices <- rep(NA, n_trials)
+  agent_feedback <- rep(NA, n_trials) 
+
+  # --- Trial 1 (Initialization) ---
+  # Agents behave randomly or use a specific start bias on trial 1
+  agent_choices[1] <- rbinom(1, 1, 0.5)
+  opponent_choices[1] <- rbinom(1, 1, 0.5)
+  
+  # Check winner (Assuming Agent is Matcher: Win if choices match)
+  agent_feedback[1] <- ifelse(agent_choices[1] == opponent_choices[1], 1, 0)
+
+  # --- Loop through Game ---
+  for (t in 2:n_trials) {
+    
+    # 1. Agent makes a choice based on history (t-1)
+    if (agent_strategy == "WSLS") {
+      agent_choices[t] <- WSLSAgent_f(agent_choices[t-1], agent_feedback[t-1], agent_params$noise)
+    } else if (agent_strategy == "Random") {
+      agent_choices[t] <- RandomAgent_f(1, agent_params$rate, agent_params$noise)
+    }
+    
+    # 2. Opponent makes a choice
+    if (opponent_strategy == "Random") {
+      opponent_choices[t] <- RandomAgent_f(1, opponent_params$rate, opponent_params$noise)
+    } else if (opponent_strategy == "WSLS") {
+      # Opponent is Hider: They win if choices MISMATCH. 
+      # So their feedback is the opposite of the Agent's feedback.
+      op_feedback <- 1 - agent_feedback[t-1]
+      opponent_choices[t] <- WSLSAgent_f(opponent_choices[t-1], op_feedback, opponent_params$noise)
+    }
+
+    # 3. Determine Outcome
+    agent_feedback[t] <- ifelse(agent_choices[t] == opponent_choices[t], 1, 0)
+  }
+
+  # Return data
+  return(tibble(
+    trial = 1:n_trials,
+    choice = agent_choices,
+    opponent = opponent_choices,
+    win = agent_feedback
+  ))
+}
+
+# --- Running Scaled Simulations ---
+cat("Running scaled simulations...\n")
+```
+
+```{r}
+# Default WSLS parameters (Only 'noise' is used by our simple WSLS agent)
+wsls_params_default <- list(noise = 0)
+
+# Simulation 1: WSLS vs. Random agents with varying biases
+opponent_rates <- seq(from = 0.5, to = 1, by = 0.05)
+results_vs_random <- list() 
+
+for (rate in opponent_rates) {
+  # Create a list to store runs for this specific rate
+  rate_runs <- list()
+  
+  for (agent_i in 1:agents) {
+     opponent_params_rand <- list(rate = rate, noise = 0)
+     
+     # CORRECTED CALL: Added "WSLS" as the second argument
+     sim_run <- run_simulation(trials, "WSLS", wsls_params_default, "Random", opponent_params_rand)
+     
+     sim_run$agent <- agent_i
+     sim_run$opponent_rate <- rate
+     rate_runs[[agent_i]] <- sim_run
+  }
+  # Combine all agents for this rate and store in main list
+  results_vs_random[[as.character(rate)]] <- bind_rows(rate_runs)
+}
+# Combine everything into one big dataframe
+df_scaled_vs_random <- bind_rows(results_vs_random)
+```
+
+```{r}
+# Calculate cumulative performance for each simulation run
+df_scaled_vs_random <- df_scaled_vs_random %>%
+  group_by(agent, opponent_rate) %>%
+  # CHANGED 'Feedback' to 'win' here:
+  mutate(Cumulative_Performance = cumsum(win) / row_number()) %>%
+  ungroup()
+
+# Plot average performance over time, grouped by opponent bias rate
+p_scaled_perf <- ggplot(df_scaled_vs_random,
+       aes(x = trial, y = Cumulative_Performance,
+           group = opponent_rate, color = as.factor(opponent_rate))) + # made color a factor for cleaner legend
+  stat_summary(fun = mean, geom = "line", size = 1) +
+  geom_hline(yintercept = 0.5, linetype = "dashed") +
+  scale_color_viridis_d() + # Discrete scale since we made rate a factor
+  labs(
+    title = "Average WSLS_v Performance vs. Random Opponents",
+    subtitle = "Performance improves as opponent's bias increases",
+    x = "Trial Number",
+    y = "Average Proportion Wins",
+    color = "Opponent Bias"
+  ) +
+  ylim(0, 1) +
+  theme_classic()
+
+print(p_scaled_perf)
+```
+
+
+
