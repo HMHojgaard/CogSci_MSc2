@@ -22,7 +22,7 @@ pacman::p_load(
 )
 ```
 
-
+## Data
 ```{r}
 # No. of participants (players)
 INT<lower = 1>players;	
@@ -37,5 +37,16 @@ ARRAY[n] INT<lower=0, upper=1> choice;
 #Feedback (feedback)
 ARRAY[n] INT<lower=0, upper=1> feedback;
 
+```
+
+## Parameters
+Alpha : Learning Rate → Bounded between 0-1
+Tau : Inverse temperature → Bounded at 0-infinite (The higher tau → The more deterministic) 
+
+```{r}
+parameters {
+real <lower=0, upper = 1> alpha;      #alpha
+real <lower=0, upper = 20> tau;       #tau
+}
 ```
 
