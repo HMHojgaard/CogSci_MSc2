@@ -1,0 +1,41 @@
+---
+title: 'Assignment 2: STAN'
+author: "Study Group 6"
+date: "2026-02-20"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Loading required packages
+pacman::p_load(
+  tidyverse,    # Data manipulation and plotting
+  here,         # Robust file paths
+  cmdstanr,     # Stan interface
+  posterior,    # Posterior analysis
+  bayesplot,    # Plotting MCMC
+  furrr,        # Parallel processing
+  future        # Future backend
+)
+```
+
+
+```{r}
+# No. of participants (players)
+INT<lower = 1>players;	
+
+#no. of trials (n)
+INT<lower=1> n; 			
+
+# Choices (choice)
+ARRAY[n] INT<lower=0, upper=1> choice; 			
+#ARRAY[n,players ]INT<lower=0, upper=1> choice;
+
+#Feedback (feedback)
+ARRAY[n] INT<lower=0, upper=1> feedback;
+
+```
+
