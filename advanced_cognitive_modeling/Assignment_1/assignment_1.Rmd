@@ -56,9 +56,9 @@ RandomAgent_f <- function(n_trials, rate = 0.5, noise = 0) {
 example_choices <- RandomAgent_f(n_trials = 10, rate = 0.7, noise = 0.1)
 
 print(paste("Example choices (rate=0.7, noise=0.1):", paste(example_choices, collapse = " ")))
-```
+``` 
 
-
+ 
 
 ```{r}
 #' Win-Stay-Lose-Shift Agent Function
