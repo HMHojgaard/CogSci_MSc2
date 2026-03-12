@@ -22,31 +22,214 @@ pacman::p_load(
 )
 ```
 
-## Data
-```{r}
-# No. of participants (players)
-INT<lower = 1>players;	
+Simulation code from the google docs
 
-#no. of trials (n)
-INT<lower=1> n; 			
+```{r reinforcement agent}
+set.seed(123)
 
-# Choices (choice)
-ARRAY[n] INT<lower=0, upper=1> choice; 			
-#ARRAY[n,players ]INT<lower=0, upper=1> choice;
+trials <- 20  
 
-#Feedback (feedback)
-ARRAY[n] INT<lower=0, upper=1> feedback;
+# random agent director
+opponents_choices = rbinom(trials, 1, 0.8)
+
+# parameters to be recovered
+alpha <- 0.8 # learning rate
+tau <- 1 # inverse temperature
+
+# prepare variables
+V <- numeric(trials) # value
+p <- numeric(trials) # probability of choosing right
+choices <- integer(trials) # guesser's choices
+
+# first trial
+V[1] = 0.5 # uninformed starting value
+p[1] <- 1 / (1 + exp(-tau * V[1])) # softmax - tehcnically obsolete with a starting v of 0.5 and binary choice
+choices[1] <- rbinom(1, 1, p[1]) # making the first choice
+
+for (t in 2:trials) {
+  
+  # belief update (Rescorla-Wagner)
+  V[t] = V[t-1] + alpha * (opponents_choices[t-1] - V[t-1])
+
+  # prob of choosing right (softmax)
+  p[t] = 1 / (1 + exp(-tau * V[t]))
+
+  # make choice
+	choices[t] = rbinom(1, 1, p[t])
+}
+
+# saving to df
+df <- data.frame(
+  trial = 1:trials, 
+  value = V,
+  prob = p,
+  opponents_choice = factor(opponents_choices,
+                  levels = c(0, 1),
+                  labels = c("left", "right")), # rename 1 to right, and 0 to left 
+  choice = factor(choices,
+                  levels = c(0, 1),
+                  labels = c("left", "right"))
+  )
 
 ```
 
-## Parameters
-Alpha : Learning Rate → Bounded between 0-1
-Tau : Inverse temperature → Bounded at 0-infinite (The higher tau → The more deterministic) 
+```{r}
+# adding some extra quantities to the tibble
+df$choice_numeric <- ifelse(df$choice == "right", 1, 0)
+df$opponents_choice_numeric <- ifelse(df$opponents_choice == "right", 1, 0)
+df$reward_right <- ifelse(df$opponents_choice == "right", 1, 0)
+```
+
+
+Plotting similarly to in assignment 1
 
 ```{r}
+
+
+choice_distribution <- ggplot(df, aes(x = trial)) +
+  geom_line(aes(y = value, color = "Expected value of right"), linewidth = 0.8) +  # draw line FIRST (bottom layer)
+  geom_point(aes(y = opponents_choice_numeric, color = "Biased opponent"), alpha = 0.6) +
+  geom_point(aes(y = choice_numeric, color = "RL agent"), alpha = 0.6) +
+  scale_y_continuous(
+    limits = c(-0.1, 1.1),
+    breaks = c(0, 1),
+    labels = c("Left (0)", "Right (1)")
+  ) +
+  labs(title = "RL agent vs. Biased Random", y = "Choice") +
+  theme_classic()
+
+choice_distribution
+
+
+
+
+```
+SO the agent changes its expect value very quickly
+could also plot the relationship between V and p, which is determined by tau, and the relationship between correctness and V
+
+
+### writing the stan-code
+In the below i took from course notes 5.4 the structure of the r-to-stan pipeline and added own stan code based on whats in the docs, updated to hopefulle work
+
+```{r}
+stan_model_code <- "
+// 1. Data Block: Declares the data Stan expects from R
+data {
+  int<lower=1> n;       		   // Number of trials (must be at least 1)
+  array[n] int<lower=0, upper=1> h; // Array 'h' of length 'n' containing choices (0 or 1)
+  array[n] int<lower=0, upper=1> h_opponent; // Array 'h' of length 'n' containing opponents choices (0 or 1)
+  array[n] int<lower=0, upper=1> feedback; // Array 'h' of length 'n' containing opponents choices (0 or 1)
+}
+
 parameters {
-real <lower=0, upper = 1> alpha;      #alpha
-real <lower=0, upper = 20> tau;       #tau
+real <lower=0, upper = 1> alpha; 	    	  //not a vector → Learning rate is fixed (1 no.)
+real <lower=0, upper = 1> tau;		  //not a vector → no change in outcome after 20
+}
+
+transformed parameters {
+real <lower=0, upper=20> tau_scaled = tau*20;   //rescale tau to 0-20
+}
+
+
+model {
+  array[n] real V;
+
+  // Prior: Our belief about theta *before* seeing the data.
+  // 'target +=' adds the log-probability density to the overall model log-probability.
+
+  target += beta_lpdf(alpha | 1, 1); // lpdf = log probability density function
+  target += beta_lpdf(tau | 2, 8);
+
+
+  // Likelihood: How the data 'h' depend on the parameter 'theta'.
+  // The model assesses how likely the observed sequence 'h' is given a value of 'theta'.
+
+  V[1] = 0.5;
+  target += bernoulli_lpmf(h[1]| 0.5); // lpmf = log probability mass function (for discrete data)
+
+  for (t in 2:n){
+    V[t]=V[t-1]+alpha*(feedback[t-1]-V[t-1]); // reward and expected value are both for picking right
+    real p=1/(1+exp(-tau_scaled*V[t]));
+
+  target += bernoulli_lpmf(h[t]| p); // lpmf = log probability mass function (for discrete data)
+  }
+}
+"
+# Define relative path for Stan model file
+stan_model_dir <- "advanced_cognitive_modeling/Assignment_2/stan"
+stan_file_RL <- here(stan_model_dir, "RL_model.stan")
+
+# Create directory if needed
+if (!dir.exists(stan_model_dir)) dir.create(stan_model_dir)
+
+# Write the Stan code to the file
+writeLines(stan_model_code, stan_file_RL)
+
+cat("Stan model written to:", stan_file_RL, "\n")
+```
+Had some trouble with the file- paths but it seems to work now
+
+```{r}
+# Stan requires data in a list format
+data_for_stan <- list(
+  n = trials,     # Number of trials (integer)
+  h = df$choice_numeric,
+  h_opponent = df$opponents_choice_numeric,
+  feedback = df$reward_right
+)
+
+str(data_for_stan) # Show the structure of the list
+
+```
+
+
+
+
+## fitting
+
+```{r}
+## --- Compile and Fit ---
+# Specify model file path
+stan_file_RL <- here(stan_model_dir, "RL_model.stan")
+
+# Define path for saving fitted model object
+stan_results_dir <- "simmodels"
+model_file_RL <- here(stan_results_dir, "RL_model.rds")
+
+if (!dir.exists(stan_results_dir)) dir.create(stan_results_dir)
+
+if (!file.exists(model_file_RL)) {
+  cat("Compiling and fitting Stan model (RL)...\n")
+  # Compile the Stan model (only needs to be done once unless code changes)
+  mod_RL <- cmdstan_model(stan_file_RL,
+                                 cpp_options = list(stan_threads = FALSE), # Enable threading
+                                 stanc_options = list("O1")) # Basic optimization
+
+  # Sample from the posterior distribution using MCMC
+  fit_RL <- mod_RL$sample(
+    data = data_for_stan,          # The data list we prepared
+    seed = 123,                    # For reproducible MCMC sampling
+    chains = 4,                    # Number of parallel Markov chains (recommend 4)
+    parallel_chains = 4, # Run chains in parallel
+    #threads_per_chain = 1,         # For within-chain parallelization (usually 1 is fine)
+    iter_warmup = 1000,            # Number of warmup iterations per chain (discarded)
+    iter_sampling = 2000,          # Number of sampling iterations per chain (kept)
+    refresh = 0,                   # How often to print progress updates. 0 means never since the model is so fast
+    max_treedepth = 10,            # Controls complexity of MCMC steps (adjust if needed)
+    adapt_delta = 0.8              # Target acceptance rate (adjust if divergences occur)
+  )
+
+  # Save the fitted model object
+  fit_RL$save_object(file = model_file_bernoulli)
+  cat("Model fit completed and saved to:", model_file_RL, "\n")
+} else {
+  # Load existing fitted model object
+  fit_RL <- readRDS(model_file_RL)
+  cat("Loaded existing model fit from:", model_file_RL, "\n")
 }
 ```
+
+
+
+
 
