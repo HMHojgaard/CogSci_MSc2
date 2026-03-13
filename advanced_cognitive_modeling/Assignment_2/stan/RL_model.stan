@@ -5,6 +5,9 @@ data {
   array[n] int<lower=0, upper=1> h; // Array 'h' of length 'n' containing choices (0 or 1)
   array[n] int<lower=0, upper=1> h_opponent; // Array 'h' of length 'n' containing opponents choices (0 or 1)
   array[n] int<lower=0, upper=1> feedback; // Array 'h' of length 'n' containing opponents choices (0 or 1)
+  real <lower = 0> prior_alpha_a // added prior variable for alpha - it might be good to add for tau as well
+  real <lower = 0> prior_alpha_b
+  
 }
 
 parameters {
@@ -23,7 +26,7 @@ model {
   // Prior: Our belief about alpha and tau *before* seeing the data.
   // 'target +=' adds the log-probability density to the overall model log-probability.
 
-  target += beta_lpdf(alpha | 2, 2); // lpdf = log probability density function
+  target += beta_lpdf(alpha | prior_alpha_a, prior_alpha_b); // lpdf = log probability density function
   target += beta_lpdf(tau | 2, 8);
 
 
@@ -47,8 +50,9 @@ generated quantities {
   real<lower=0, upper=1> tau_prior;
   real<lower=0, upper=20> tau_prior_scaled;
 
-  alpha_prior = beta_rng(2, 2); // Not uniform - we expect most people to have a moderate learning rate
+  alpha_prior = beta_rng(prior_alpha_a, prior_alpha_b); // Not uniform - we expect most people to have a moderate learning rate
   tau_prior = beta_rng(2, 8);
   tau_prior_scaled = tau_prior * 20;
+  
 }
 

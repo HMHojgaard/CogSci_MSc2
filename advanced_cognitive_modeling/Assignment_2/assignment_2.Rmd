@@ -109,12 +109,16 @@ In the below i took from course notes 5.4 the structure of the r-to-stan pipelin
 
 ```{r}
 stan_model_code <- "
+
 // 1. Data Block: Declares the data Stan expects from R
 data {
   int<lower=1> n;       		   // Number of trials (must be at least 1)
   array[n] int<lower=0, upper=1> h; // Array 'h' of length 'n' containing choices (0 or 1)
   array[n] int<lower=0, upper=1> h_opponent; // Array 'h' of length 'n' containing opponents choices (0 or 1)
   array[n] int<lower=0, upper=1> feedback; // Array 'h' of length 'n' containing opponents choices (0 or 1)
+  real <lower = 0> prior_alpha_a // added prior variable for alpha - it might be good to add for tau as well
+  real <lower = 0> prior_alpha_b
+  
 }
 
 parameters {
@@ -133,7 +137,7 @@ model {
   // Prior: Our belief about alpha and tau *before* seeing the data.
   // 'target +=' adds the log-probability density to the overall model log-probability.
 
-  target += beta_lpdf(alpha | 2, 2); // lpdf = log probability density function
+  target += beta_lpdf(alpha | prior_alpha_a, prior_alpha_b); // lpdf = log probability density function
   target += beta_lpdf(tau | 2, 8);
 
 
@@ -157,9 +161,10 @@ generated quantities {
   real<lower=0, upper=1> tau_prior;
   real<lower=0, upper=20> tau_prior_scaled;
 
-  alpha_prior = beta_rng(2, 2); // Not uniform - we expect most people to have a moderate learning rate
+  alpha_prior = beta_rng(prior_alpha_a, prior_alpha_b); // Not uniform - we expect most people to have a moderate learning rate
   tau_prior = beta_rng(2, 8);
   tau_prior_scaled = tau_prior * 20;
+  
 }
 "
 
@@ -184,7 +189,9 @@ data_for_stan <- list(
   n = trials,     # Number of trials (integer)
   h = df$choice_numeric,
   h_opponent = df$opponents_choice_numeric,
-  feedback = df$reward_right
+  feedback = df$reward_right,
+  prior_alpha_a = 2
+  prior_alpha_b = 2
 )
 
 str(data_for_stan) # Show the structure of the list
@@ -257,7 +264,8 @@ fit_summary <- fit_RL$summary(variables = c("alpha", "tau", "tau_scaled"))
 fit_summary[, c("variable", "mean", "rhat", "ess_bulk", "ess_tail")]
 ```
 ```{r}
-# 3. Visual Checks (Trace and Rank Plots)
+# 3. Visual Checks (Trace and Rank Plots) - For tau
+
 draws_df <- as_draws_df(fit_RL$draws())
 
 # A healthy trace plot is well-mixed with no wandering
@@ -273,6 +281,25 @@ p_rank <- mcmc_rank_hist(draws_df, pars = "tau_scaled") +
 p_trace 
 p_rank
 ```
+
+```{r}
+# For alpha
+
+# A healthy trace plot is well-mixed with no wandering
+p_trace <- mcmc_trace(draws_df, pars = "alpha") + 
+  theme_classic() + 
+  ggtitle("Trace Plot: Well-mixed chains")
+
+# A healthy rank histogram has uniform bars across all chains
+p_rank <- mcmc_rank_hist(draws_df, pars = "alpha") + 
+  theme_classic() + 
+  ggtitle("Rank Histogram: Chains explored the same space")
+
+p_trace 
+p_rank
+```
+
+
 
 ```{r}
 # 4. Look at the Posterior Estimate (Alpha)
@@ -304,20 +331,141 @@ ggplot(draws_df) +
   theme_classic()
                     
 ```
-
+So it seems the model has learned the tau with great precision but it is not learning much about the alfa
 
 ```{r}
+# Extract the summary statistic calculated from prior predictive simulations
+# 'prior_rep_sum' was calculated within the generated quantities block
 
+# Ensure we have the draws as a dataframe
+observed_sum <- sum(data_for_stan$h) # Total number of 'right' choices in the actual observed data
+
+ppc_prior_ggplot <- ggplot(draws_df, aes(x = prior_rep_sum)) +
+  # Draw the histogram of the model's prior predictions (light red)
+  geom_histogram(fill = "#ffbaba", color = "#ff5252", bins = 30, alpha = 0.8) +
+  
+  # Add the vertical line for the actual observed data (dark red)
+  geom_vline(xintercept = observed_sum, color = "darkred", linewidth = 1.2) +
+  
+  # Labels and theming
+  ggtitle("Prior Predictive Check: Total 'Right' Choices") +
+  xlab(paste("Total Number of 'Right' Choices (out of", trials, "trials)")) +
+  ylab("Frequency") +
+  theme_classic()
+
+ppc_prior_ggplot
 ```
 
 
 
+So that is hard
+possibly it can be done
+
+
+```{r}
+# adding a regenerate simulations variable to use riccardos structure - this should be changed  to true every time the stan code is changed or somethig else that require things to be simulated again
+
+regenerate_simulations <- TRUE
+```
 
 
 
+```{r}
+#defining a grid of prior values to try - only for alpha right now, and since it is a beta prior there is an alpha and a beta parameter to vary
+prior_grid <- tidyr::expand_grid(
+  prior_a = c(0, 2, 5, 10, 20), 
+  prior_b = c(0, 2, 5, 10, 20)
+)
 
 
+# Standardized filename variable
+sensitivity_draws_file <- file.path(here(stan_results_dir), "W5_sensitivity_draws.rds")
 
+if (regenerate_simulations || !file.exists(sensitivity_draws_file)) {
+  # Removed 'seed_val' from the function arguments
+  fit_and_extract <- function(prior_a, prior_b) {
+    # Dynamically inject the perturbed parameters into the data list
+    current_data_list <- data_for_stan
+    current_data_list$prior_alpha_a <- prior_a
+    current_data_list$prior_alpha_b <- prior_b
+
+    # Fit using the original compiled model
+    fit <- mod_RL$sample(
+      data = current_data_list,
+      chains = 1,
+      parallel_chains = 1, 
+      iter_warmup = 1000,
+      iter_sampling = 3000,
+      refresh = 0, 
+      adapt_delta = 0.8,
+      show_messages = FALSE,
+      show_exceptions = FALSE # Added to prevent C++ errors from polluting stdout
+    )
+    
+    draws_df <- fit$draws("alpha", format = "df")
+    
+    # Return a strictly structured tibble, discarding the fragile fit object
+    tibble::tibble(
+      alpha_prob = draws_df$alpha,
+      prior_a = prior_a,
+      prior_b = prior_b
+    )
+  }
+
+  # Establish the parallel backend 
+  future::plan(future::multisession, workers = 2)
+  
+  # Execute the parallel mapping
+  draws_list <- furrr::future_pmap(
+    prior_grid,
+    fit_and_extract,
+    .options = furrr::furrr_options(seed = TRUE, stdout = FALSE) 
+  )
+  
+  # Collapse the list of dataframes into a single tidy dataframe
+  sensitivity_draws <- dplyr::bind_rows(draws_list)
+  
+  # Shut down the parallel backend to free up RAM
+  future::plan(future::sequential)
+  
+  # Save the indestructible, pure data (fixed variable name)
+  saveRDS(sensitivity_draws, sensitivity_draws_file)
+  
+} else {
+  # Fixed variable names to match what was saved
+  sensitivity_draws <- readRDS(sensitivity_draws_file)
+  cat("Loaded existing perturbation grid from:", sensitivity_draws_file, "\n")
+}
+
+```
+
+```{r}
+# saving the true alpha for the visualization
+true_alpha= 0.8
+```
+
+
+```{r}
+#visualizing the prior sensitivity code from riccardo
+p_sensitivity_2d <- ggplot(sensitivity_draws, aes(x = alpha_prob, group = factor(prior_b), colour = prior_b)) +
+  geom_line(stat = "density", alpha = 0.8, linewidth = 0.8) + 
+  geom_vline(xintercept = true_alpha, color = "black", linetype = "dashed", linewidth = 1) + 
+  facet_wrap(~ prior_a, labeller = labeller(prior_a = function(x) paste0("Alpha prior a parameter: ", x))) +
+  scale_color_viridis_c(option = "mako", name = expression(Prior ~ sigma)) + 
+  coord_cartesian(xlim = c(0.4, 1.0)) + 
+  ggtitle("Epistemic Robustness: 2D Prior Perturbation Grid") +
+  xlab(expression(theta ~ " (Probability scale)")) +
+  ylab("Marginal Density") +
+  theme_classic() +
+  theme(
+    legend.position = "bottom",
+    strip.background = element_rect(fill = "gray95", color = "NA"),
+    strip.text = element_text(face = "bold", size = 11)
+  )
+
+p_sensitivity_2d
+```
+this doesnt seem like a very big impact of the prior, which is good i guess
 
 
 
