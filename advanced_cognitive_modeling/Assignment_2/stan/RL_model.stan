@@ -20,10 +20,10 @@ real <lower=0, upper=20> tau_scaled = tau*20;   //rescale tau to 0-20
 model {
   array[n] real V;
 
-  // Prior: Our belief about theta *before* seeing the data.
+  // Prior: Our belief about alpha and tau *before* seeing the data.
   // 'target +=' adds the log-probability density to the overall model log-probability.
 
-  target += beta_lpdf(alpha | 1, 1); // lpdf = log probability density function
+  target += beta_lpdf(alpha | 2, 2); // lpdf = log probability density function
   target += beta_lpdf(tau | 2, 8);
 
 
@@ -39,5 +39,16 @@ model {
 
   target += bernoulli_lpmf(h[t]| p); // lpmf = log probability mass function (for discrete data)
   }
+  
+}
+
+generated quantities {
+  real<lower=0, upper=1> alpha_prior;
+  real<lower=0, upper=1> tau_prior;
+  real<lower=0, upper=20> tau_prior_scaled;
+
+  alpha_prior = beta_rng(2, 2); // Not uniform - we expect most people to have a moderate learning rate
+  tau_prior = beta_rng(2, 8);
+  tau_prior_scaled = tau_prior * 20;
 }
 

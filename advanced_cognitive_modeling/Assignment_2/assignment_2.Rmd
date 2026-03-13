@@ -22,14 +22,14 @@ pacman::p_load(
 )
 ```
 
-Simulation code from the google docs
+
 
 ```{r reinforcement agent}
 set.seed(123)
 
-trials <- 20  
+trials <- 500  
 
-# random agent director
+# random biased agent director
 opponents_choices = rbinom(trials, 1, 0.8)
 
 # parameters to be recovered
@@ -43,7 +43,7 @@ choices <- integer(trials) # guesser's choices
 
 # first trial
 V[1] = 0.5 # uninformed starting value
-p[1] <- 1 / (1 + exp(-tau * V[1])) # softmax - tehcnically obsolete with a starting v of 0.5 and binary choice
+p[1] <- 1 / (1 + exp(-tau * V[1])) # softmax - technically obsolete with a starting v of 0.5 and binary choice
 choices[1] <- rbinom(1, 1, p[1]) # making the first choice
 
 for (t in 2:trials) {
@@ -84,12 +84,10 @@ df$reward_right <- ifelse(df$opponents_choice == "right", 1, 0)
 Plotting similarly to in assignment 1
 
 ```{r}
-
-
 choice_distribution <- ggplot(df, aes(x = trial)) +
   geom_line(aes(y = value, color = "Expected value of right"), linewidth = 0.8) +  # draw line FIRST (bottom layer)
-  geom_point(aes(y = opponents_choice_numeric, color = "Biased opponent"), alpha = 0.6) +
-  geom_point(aes(y = choice_numeric, color = "RL agent"), alpha = 0.6) +
+  geom_point(aes(y = opponents_choice_numeric, color = "Biased opponent"), alpha = 0.6, size = 2, position = position_jitter(width = 0.1, height = 0.05)) +
+  geom_point(aes(y = choice_numeric, color = "RL agent"), alpha = 0.6, size = 2, position = position_jitter(width = 0.1, height = 0.05)) +
   scale_y_continuous(
     limits = c(-0.1, 1.1),
     breaks = c(0, 1),
@@ -100,12 +98,10 @@ choice_distribution <- ggplot(df, aes(x = trial)) +
 
 choice_distribution
 
-
-
-
 ```
-SO the agent changes its expect value very quickly
-could also plot the relationship between V and p, which is determined by tau, and the relationship between correctness and V
+So the agent changes its expected value very quickly.
+
+Could also plot the relationship between V and p, which is determined by tau, and the relationship between correctness and V
 
 
 ### writing the stan-code
@@ -134,10 +130,10 @@ real <lower=0, upper=20> tau_scaled = tau*20;   //rescale tau to 0-20
 model {
   array[n] real V;
 
-  // Prior: Our belief about theta *before* seeing the data.
+  // Prior: Our belief about alpha and tau *before* seeing the data.
   // 'target +=' adds the log-probability density to the overall model log-probability.
 
-  target += beta_lpdf(alpha | 1, 1); // lpdf = log probability density function
+  target += beta_lpdf(alpha | 2, 2); // lpdf = log probability density function
   target += beta_lpdf(tau | 2, 8);
 
 
@@ -153,8 +149,21 @@ model {
 
   target += bernoulli_lpmf(h[t]| p); // lpmf = log probability mass function (for discrete data)
   }
+  
+}
+
+generated quantities {
+  real<lower=0, upper=1> alpha_prior;
+  real<lower=0, upper=1> tau_prior;
+  real<lower=0, upper=20> tau_prior_scaled;
+
+  alpha_prior = beta_rng(2, 2); // Not uniform - we expect most people to have a moderate learning rate
+  tau_prior = beta_rng(2, 8);
+  tau_prior_scaled = tau_prior * 20;
 }
 "
+
+
 # Define relative path for Stan model file
 stan_model_dir <- "advanced_cognitive_modeling/Assignment_2/stan"
 stan_file_RL <- here(stan_model_dir, "RL_model.stan")
@@ -181,10 +190,6 @@ data_for_stan <- list(
 str(data_for_stan) # Show the structure of the list
 
 ```
-
-
-
-
 ## fitting
 
 ```{r}
@@ -193,8 +198,11 @@ str(data_for_stan) # Show the structure of the list
 stan_file_RL <- here(stan_model_dir, "RL_model.stan")
 
 # Define path for saving fitted model object
-stan_results_dir <- "simmodels"
-model_file_RL <- here(stan_results_dir, "RL_model.rds")
+stan_results_dir <- "~/Documents/GitHub/CogSci_MSc2/advanced_cognitive_modeling/Assignment_2/simmodels"
+model_file_RL <- file.path(stan_results_dir, "RL_model.rds")
+
+dir.create(stan_results_dir, recursive = TRUE, showWarnings = FALSE)
+
 
 if (!dir.exists(stan_results_dir)) dir.create(stan_results_dir)
 
@@ -220,7 +228,7 @@ if (!file.exists(model_file_RL)) {
   )
 
   # Save the fitted model object
-  fit_RL$save_object(file = model_file_bernoulli)
+  fit_RL$save_object(file = model_file_RL)
   cat("Model fit completed and saved to:", model_file_RL, "\n")
 } else {
   # Load existing fitted model object
@@ -228,6 +236,90 @@ if (!file.exists(model_file_RL)) {
   cat("Loaded existing model fit from:", model_file_RL, "\n")
 }
 ```
+
+```{r}
+#cmdstanr::rebuild_cmdstan()
+```
+
+
+## Quality Assessment 
+
+```{r}
+# 1. Check for Divergent Transitions
+diagnostics <- fit_RL$diagnostic_summary()
+cat("Divergent transitions per chain:", paste(diagnostics$num_divergent, collapse = ", "), "\n")
+```
+
+```{r}
+# 2. Check R-hat and ESS metrics
+fit_summary <- fit_RL$summary(variables = c("alpha", "tau", "tau_scaled"))
+
+fit_summary[, c("variable", "mean", "rhat", "ess_bulk", "ess_tail")]
+```
+```{r}
+# 3. Visual Checks (Trace and Rank Plots)
+draws_df <- as_draws_df(fit_RL$draws())
+
+# A healthy trace plot is well-mixed with no wandering
+p_trace <- mcmc_trace(draws_df, pars = "tau_scaled") + 
+  theme_classic() + 
+  ggtitle("Trace Plot: Well-mixed chains")
+
+# A healthy rank histogram has uniform bars across all chains
+p_rank <- mcmc_rank_hist(draws_df, pars = "tau_scaled") + 
+  theme_classic() + 
+  ggtitle("Rank Histogram: Chains explored the same space")
+
+p_trace 
+p_rank
+```
+
+```{r}
+# 4. Look at the Posterior Estimate (Alpha)
+ggplot(draws_df) +
+  geom_density(aes(alpha, fill = "Posterior"), alpha = 0.6) +
+  geom_density(aes(alpha_prior, fill = "Prior"), alpha = 0.6) +
+  geom_vline(xintercept = 0.8, linetype = "dashed", color = "black", linewidth = 1.2) +
+  scale_fill_manual(values = c("Posterior" = "blue", "Prior" = "red")) +
+  labs(
+    title = "Prior-Posterior Update for alpha",
+    x = "Learning Rate (alpha)",
+    y = "Density",
+    fill = "Distribution"
+  ) +
+  theme_classic()
+
+#Posterior Estimate (Tau)
+ggplot(draws_df) +
+  geom_density(aes(x = tau_scaled, fill = "Posterior"), alpha = 0.6) +
+  geom_density(aes(x = tau_prior_scaled, fill = "Prior"), alpha = 0.6) +
+  geom_vline(xintercept = 1, linetype = "dashed", color = "black", linewidth = 1.2) +
+  scale_fill_manual(values = c("Posterior" = "blue", "Prior" = "red")) +
+  labs(
+    title = "Prior-Posterior Update for tau",
+    x = "Temperature",
+    y = "Density",
+    fill = "Distribution"
+  ) +
+  theme_classic()
+                    
+```
+
+
+```{r}
+
+```
+
+
+
+
+
+
+
+
+
+
+
 
 
 
