@@ -22,7 +22,11 @@ pacman::p_load(
 )
 ```
 
+```{r}
+# adding a regenerate simulations variable to use riccardos structure - this should be changed  to true every time the stan code is changed or somethig else that require things to be simulated again BY SETTING THIS TO TRUE EVERYTHING SHOULD RUN WITHOUT HAVING TO DELETE THE MODEL FILES IN THE FOLDERS
 
+regenerate_simulations <- TRUE
+```
 
 ```{r reinforcement agent}
 set.seed(123)
@@ -34,7 +38,9 @@ opponents_choices = rbinom(trials, 1, 0.8)
 
 # parameters to be recovered
 alpha <- 0.8 # learning rate
-tau <- 1 # inverse temperature
+tau <- 1 # inverse temperatur
+
+simulate_rl_data <- function(trials, alpha, tau, opponents_choices){
 
 # prepare variables
 V <- numeric(trials) # value
@@ -56,7 +62,11 @@ for (t in 2:trials) {
 
   # make choice
 	choices[t] = rbinom(1, 1, p[t])
+	
 }
+
+
+
 
 # saving to df
 df <- data.frame(
@@ -71,13 +81,17 @@ df <- data.frame(
                   labels = c("left", "right"))
   )
 
-```
-
-```{r}
 # adding some extra quantities to the tibble
-df$choice_numeric <- ifelse(df$choice == "right", 1, 0)
 df$opponents_choice_numeric <- ifelse(df$opponents_choice == "right", 1, 0)
 df$reward_right <- ifelse(df$opponents_choice == "right", 1, 0)
+df$choice_numeric <- ifelse(df$choice == "right", 1, 0)
+
+return(df)
+
+}
+
+df <- simulate_rl_data(trials=trials, alpha=alpha, tau=tau, opponents_choices = opponents_choices )
+
 ```
 
 
@@ -116,8 +130,8 @@ data {
   array[n] int<lower=0, upper=1> h; // Array 'h' of length 'n' containing choices (0 or 1)
   array[n] int<lower=0, upper=1> h_opponent; // Array 'h' of length 'n' containing opponents choices (0 or 1)
   array[n] int<lower=0, upper=1> feedback; // Array 'h' of length 'n' containing opponents choices (0 or 1)
-  real <lower = 0> prior_alpha_a // added prior variable for alpha - it might be good to add for tau as well
-  real <lower = 0> prior_alpha_b
+  real <lower = 0> prior_alpha_a; // added prior variable for alpha - it might be good to add for tau as well
+  real <lower = 0> prior_alpha_b;
   
 }
 
@@ -190,7 +204,7 @@ data_for_stan <- list(
   h = df$choice_numeric,
   h_opponent = df$opponents_choice_numeric,
   feedback = df$reward_right,
-  prior_alpha_a = 2
+  prior_alpha_a = 2,
   prior_alpha_b = 2
 )
 
@@ -206,14 +220,12 @@ stan_file_RL <- here(stan_model_dir, "RL_model.stan")
 
 # Define path for saving fitted model object
 stan_results_dir <- "~/Documents/GitHub/CogSci_MSc2/advanced_cognitive_modeling/Assignment_2/simmodels"
-model_file_RL <- file.path(stan_results_dir, "RL_model.rds")
-
-dir.create(stan_results_dir, recursive = TRUE, showWarnings = FALSE)
+model_file_RL <- file.path(stan_results_dir, "RL_model1.rds")
 
 
 if (!dir.exists(stan_results_dir)) dir.create(stan_results_dir)
 
-if (!file.exists(model_file_RL)) {
+if (regenerate_simulations | !file.exists(model_file_RL)) {
   cat("Compiling and fitting Stan model (RL)...\n")
   # Compile the Stan model (only needs to be done once unless code changes)
   mod_RL <- cmdstan_model(stan_file_RL,
@@ -323,7 +335,7 @@ ggplot(draws_df) +
   geom_vline(xintercept = 1, linetype = "dashed", color = "black", linewidth = 1.2) +
   scale_fill_manual(values = c("Posterior" = "blue", "Prior" = "red")) +
   labs(
-    title = "Prior-Posterior Update for tau",
+    title = "Prior-Posterior Update for tau_scaled",
     x = "Temperature",
     y = "Density",
     fill = "Distribution"
@@ -331,29 +343,30 @@ ggplot(draws_df) +
   theme_classic()
                     
 ```
-So it seems the model has learned the tau with great precision but it is not learning much about the alfa
+So it seems the model has learned the tau with great precision but it is learning less about the alfa
 
 ```{r}
+# This codes was the first attempt at prior predictive checks - it doesnt work
 # Extract the summary statistic calculated from prior predictive simulations
 # 'prior_rep_sum' was calculated within the generated quantities block
 
 # Ensure we have the draws as a dataframe
-observed_sum <- sum(data_for_stan$h) # Total number of 'right' choices in the actual observed data
+#observed_sum <- sum(data_for_stan$h) # Total number of 'right' choices in the actual observed data
 
-ppc_prior_ggplot <- ggplot(draws_df, aes(x = prior_rep_sum)) +
+#ppc_prior_ggplot <- ggplot(draws_df, aes(x = prior_rep_sum)) +
   # Draw the histogram of the model's prior predictions (light red)
-  geom_histogram(fill = "#ffbaba", color = "#ff5252", bins = 30, alpha = 0.8) +
+#  geom_histogram(fill = "#ffbaba", color = "#ff5252", bins = 30, alpha = 0.8) +
   
   # Add the vertical line for the actual observed data (dark red)
-  geom_vline(xintercept = observed_sum, color = "darkred", linewidth = 1.2) +
+ # geom_vline(xintercept = observed_sum, color = "darkred", linewidth = 1.2) +
   
   # Labels and theming
-  ggtitle("Prior Predictive Check: Total 'Right' Choices") +
-  xlab(paste("Total Number of 'Right' Choices (out of", trials, "trials)")) +
-  ylab("Frequency") +
-  theme_classic()
+  #ggtitle("Prior Predictive Check: Total 'Right' Choices") +
+  #xlab(paste("Total Number of 'Right' Choices (out of", trials, "trials)")) +
+  #ylab("Frequency") +
+  #theme_classic()
 
-ppc_prior_ggplot
+#ppc_prior_ggplot
 ```
 
 
@@ -362,19 +375,13 @@ So that is hard
 possibly it can be done
 
 
-```{r}
-# adding a regenerate simulations variable to use riccardos structure - this should be changed  to true every time the stan code is changed or somethig else that require things to be simulated again
-
-regenerate_simulations <- TRUE
-```
-
 
 
 ```{r}
 #defining a grid of prior values to try - only for alpha right now, and since it is a beta prior there is an alpha and a beta parameter to vary
 prior_grid <- tidyr::expand_grid(
-  prior_a = c(0, 2, 5, 10, 20), 
-  prior_b = c(0, 2, 5, 10, 20)
+  prior_a = c(1, 2, 5, 10, 20), 
+  prior_b = c(1, 2, 5, 10, 20)
 )
 
 
@@ -465,11 +472,175 @@ p_sensitivity_2d <- ggplot(sensitivity_draws, aes(x = alpha_prob, group = factor
 
 p_sensitivity_2d
 ```
-this doesnt seem like a very big impact of the prior, which is good i guess
+For some reason the impact of the prior is huge now - not good for the model but perhaps more indicative that the test is working
 
 
 
 
 
+#### parameter recovery
 
+```{r}
+#code for testing how the simulate_rl_data function works before implementing it in the big loop below
+#n_trials = c(100)
+#true_alpha = c(0.5)
+#true_tau = c(1) # fixed temperature until the model works
+#sim_opp <- rbinom(n = n_trials, size = 1, prob = 0.8)
+#sim_h <- simulate_rl_data(trials = n_trials, alpha = true_alpha, tau = true_tau, opponents_choices = sim_opp) # outputs the last element in the function - which is the choices as numeric
+
+```
+
+
+```{r}
+
+
+recovery_grid <- tidyr::expand_grid(
+  n_trials = c(100, 200, 300, 400), #varying ntrials
+  true_alpha = c(0.5, 0.7, 0.9), # same alpha variation as the theta variation in course notes
+  true_tau = c(1) # fixed temperature until the model works
+)
+
+recovery_file <- file.path(stan_results_dir, "W5_recovery_draws.rds")
+
+
+if (regenerate_simulations || !file.exists(recovery_file)) {
+  
+  # 2. Define the isolated recovery pipeline
+  run_recovery <- function(n_trials, true_alpha, true_tau) {
+    # Generate synthetic empirical data
+    sim_opp <- rbinom(n = n_trials, size = 1, prob = 0.8) # Simulating the opponent THIS MIGHT NEED TO CHANGE TO MEET RICCARDOS SUGGESTION
+    sim_h <- simulate_rl_data(trials = n_trials, alpha = true_alpha, tau = true_tau, opponents_choices = sim_opp) # using our function
+    
+    
+    # Structure the data block for Stan
+    rec_data_list <- list(
+      n = n_trials,
+      h_opponent = sim_opp,
+      h = sim_h$choice_numeric,
+      feedback = sim_h$reward_right, 
+      prior_alpha_a = 2,
+      prior_alpha_b = 2
+    )
+    
+    # Fit the generative model
+    fit <- mod_RL$sample(
+      data = rec_data_list,
+      chains = 1,
+      iter_warmup = 1000,
+      iter_sampling = 2000,
+      refresh = 0,
+      show_messages = FALSE
+    )
+    
+    # Extract structural draws immediately to avoid temporary file fragility
+    draws_df <- fit$draws("alpha", format = "df")
+    
+    tibble::tibble(
+      trials = n_trials,
+      true_alpha = true_alpha,
+      true_tau = true_tau,
+      alpha = draws_df$alpha
+    )
+  }
+
+  # 3. Establish the parallel backend and execute mapping
+  future::plan(future::multisession, workers = 2)
+  
+  recovery_draws <- furrr::future_pmap(
+    recovery_grid,
+    run_recovery,
+    .options = furrr::furrr_options(seed = TRUE, stdout = FALSE)
+  ) |> 
+    dplyr::bind_rows()
+    
+  future::plan(future::sequential)
+  
+  saveRDS(recovery_draws, recovery_file)
+  
+} else {
+  recovery_draws <- readRDS(recovery_file)
+  cat("Loaded existing 2D recovery draws from:", recovery_file, "\n")
+}
+```
+
+```{r}
+# plotting the paramenter revcovery MIGHT NEED ADJSUTMENT OF AXES
+# 4. Compress draws into rigorous posterior summaries
+recovery_summary <- recovery_draws |> 
+  dplyr::group_by(trials, true_alpha) |> 
+  dplyr::summarize(
+    post_mean = mean(alpha),
+    lower_95 = quantile(alpha, 0.025),
+    upper_95 = quantile(alpha, 0.975),
+    .groups = "drop"
+  ) |> 
+  dplyr::mutate(
+    facet_label = paste0("Ground Truth: \u03b8 = ", true_alpha)
+  )
+
+# 5. Visualize the geometric shrinkage across the parameter space
+
+p_recovery_2d <- ggplot(recovery_summary, aes(x = factor(trials), y = post_mean)) +
+  # Map the true value to the hline dynamically per facet
+  geom_hline(aes(yintercept = true_alpha), color = "black", linetype = "dashed", linewidth = 1) +
+  geom_pointrange(aes(ymin = lower_95, ymax = upper_95, color = factor(true_alpha)), linewidth = 1, size = 0.8) +
+  
+  facet_wrap(~ facet_label) +
+  # Adjust palette range so colors remain distinct
+  scale_color_viridis_d(option = "mako", begin = 0.2, end = 0.8) +
+  
+  ggtitle("Data Adequacy & Identifiability: Parameter Recovery") +
+  xlab("Experimental Design (Number of Trials, N)") +
+  ylab(expression("Posterior Estimate of " * alpha * " (Mean & 95% CrI)")) +
+  
+  coord_cartesian(ylim = c(0.35, 1.0)) + # Bound visually to the relevant domain
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    strip.background = element_rect(fill = "gray95", color = "NA"),
+    strip.text = element_text(face = "bold", size = 11),
+    panel.grid.major.y = element_line(color = "gray90", linetype = "dotted")
+  )
+
+print(p_recovery_2d)
+```
+
+
+
+```{r}
+#plotting an alternative visualization of the recovery
+
+p_recovery_2d_alt <- ggplot(recovery_summary, aes(x = true_alpha, y = post_mean)) +
+  # The Identity Line: y = x (Estimate perfectly matches Ground Truth)
+  geom_abline(intercept = 0, slope = 1, color = "black", linetype = "dashed", linewidth = 1) +
+  
+  # The Posterior Estimates and 95% CrI
+  geom_pointrange(aes(ymin = lower_95, ymax = upper_95, color = factor(true_alpha)), linewidth = 1, size = 0.8) +
+  
+  # Facet strictly by the Experimental Design (N trials)
+  facet_wrap(
+    ~ trials, 
+    labeller = as_labeller(function(x) paste0(x, " Trials"))
+  ) +
+  
+  scale_color_viridis_d(option = "mako", begin = 0.2, end = 0.8) +
+  
+  # Ensure the coordinate space is perfectly square to preserve the visual geometry of y=x
+  coord_fixed(xlim = c(0.4, 1.0), ylim = c(0.4, 1.0)) + 
+  
+  xlab(expression("Generative Ground Truth (" * alpha * ")")) +
+  ylab(expression("Posterior Estimate (" * hat(alpha) * " Mean & 95% CrI)")) +
+  
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    strip.background = element_rect(fill = "gray95", color = "NA"),
+    strip.text = element_text(face = "bold", size = 11),
+    # Add a faint grid to help the eye assess the distance from the diagonal
+    panel.grid.major = element_line(color = "gray90", linetype = "dotted")
+  )
+
+print(p_recovery_2d_alt)
+```
+The number of trials doesn't really seem to teach us much
 

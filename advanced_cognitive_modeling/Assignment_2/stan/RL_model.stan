@@ -1,12 +1,13 @@
 
+
 // 1. Data Block: Declares the data Stan expects from R
 data {
   int<lower=1> n;       		   // Number of trials (must be at least 1)
   array[n] int<lower=0, upper=1> h; // Array 'h' of length 'n' containing choices (0 or 1)
   array[n] int<lower=0, upper=1> h_opponent; // Array 'h' of length 'n' containing opponents choices (0 or 1)
   array[n] int<lower=0, upper=1> feedback; // Array 'h' of length 'n' containing opponents choices (0 or 1)
-  real <lower = 0> prior_alpha_a // added prior variable for alpha - it might be good to add for tau as well
-  real <lower = 0> prior_alpha_b
+  real <lower = 0> prior_alpha_a; // added prior variable for alpha - it might be good to add for tau as well
+  real <lower = 0> prior_alpha_b;
   
 }
 
