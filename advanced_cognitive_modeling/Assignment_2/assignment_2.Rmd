@@ -113,6 +113,64 @@ choice_distribution <- ggplot(df, aes(x = trial)) +
 choice_distribution
 
 ```
+# Nadia: hello guys added this to help justify our priors
+```{r}
+library(tidyverse)
+
+# x-grid 
+alpha_grid <- seq(0, 1, length.out = 1000)
+
+# densities for Beta priors
+beta_df <- bind_rows(
+  tibble(
+    alpha = alpha_grid,
+    density = dbeta(alpha_grid, 1, 1),
+    prior = "Beta(1,1)"
+  ),
+  tibble(
+    alpha = alpha_grid,
+    density = dbeta(alpha_grid, 2, 2),
+    prior = "Beta(2,2)"
+  ),
+  tibble(
+    alpha = alpha_grid,
+    density = dbeta(alpha_grid, 3, 6),
+    prior = "Beta(3,6)"
+  ),
+  tibble(
+    alpha = alpha_grid,
+    density = dbeta(alpha_grid, 4, 6),
+    prior = "Beta(4,6)"
+  )
+)
+
+# set legend order
+beta_df$prior <- factor(
+  beta_df$prior,
+  levels = c(
+    "Beta(1,1)",
+    "Beta(2,2)",
+    "Beta(3,6)",
+    "Beta(4,6)"
+  )
+)
+
+# plot
+ggplot(beta_df, aes(x = alpha, y = density, color = prior)) +
+  geom_line(linewidth = 1.5) +
+  labs(
+    title = "Beta distribution shapes for alpha prior",
+    x = "Alpha (learning rate)",
+    y = "Density",
+    color = "Prior"
+  ) +
+  theme_minimal(base_size = 18)
+```
+
+
+
+
+
 So the agent changes its expected value very quickly.
 
 Could also plot the relationship between V and p, which is determined by tau, and the relationship between correctness and V
@@ -184,6 +242,7 @@ generated quantities {
 
 
 # Define relative path for Stan model file
+#stan_model_dir <- "/Users/nadiahajighassem/Documents/GitHUb/CogSci_MSc2/advanced_cognitive_modeling/Assignment_2/stan"
 stan_model_dir <- "advanced_cognitive_modeling/Assignment_2/stan"
 stan_file_RL <- here(stan_model_dir, "RL_model.stan")
 
@@ -474,8 +533,62 @@ p_sensitivity_2d
 ```
 For some reason the impact of the prior is huge now - not good for the model but perhaps more indicative that the test is working
 
+# Prior sensitvity analysis - trajectory
 
+This plot shows how the posterior mean of alpha and its credible intervals change when different priors are used for alpha.
+```{r}
+sensitivity_summary <- sensitivity_draws |> 
+  dplyr::group_by(prior_a, prior_b) |> 
+  dplyr::summarize(
+    post_mean = mean(alpha_prob),
+    lower_95 = quantile(alpha_prob, 0.025),
+    upper_95 = quantile(alpha_prob, 0.975),
+    lower_68 = quantile(alpha_prob, 0.16),
+    upper_68 = quantile(alpha_prob, 0.84),
+    .groups = "drop"
+  ) |> 
+  dplyr::mutate(
+    prior_a_label = factor(
+      prior_a, 
+      levels = c(1, 2, 5, 10, 20), 
+      labels = c(
+        "Prior a = 1",
+        "Prior a = 2",
+        "Prior a = 5",
+        "Prior a = 10",
+        "Prior a = 20"
+      )
+    )
+  )
 
+p_sensitivity_trajectory <- ggplot(
+  sensitivity_summary,
+  aes(x = prior_b, y = post_mean, group = 1)
+) +
+  geom_hline(yintercept = true_alpha, color = "black", linetype = "dashed", linewidth = 1) +
+  geom_ribbon(aes(ymin = lower_95, ymax = upper_95), alpha = 0.15, fill = "steelblue") +
+  geom_ribbon(aes(ymin = lower_68, ymax = upper_68), alpha = 0.35, fill = "steelblue") +
+  geom_line(linewidth = 1, color = "steelblue4") +
+  geom_point(size = 2, color = "steelblue4") +
+  facet_wrap(~ prior_a_label) +
+  coord_cartesian(ylim = c(0, 1)) +
+  ggtitle("Prior Sensitivity Summary for Alpha") +
+  xlab("Beta prior b parameter") +
+  ylab("Posterior estimate of alpha (mean, 68%, 95% CrI)") +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    strip.background = element_rect(fill = "gray95", color = NA),
+    strip.text = element_text(face = "bold", size = 11),
+    panel.grid.major.y = element_line(color = "gray90", linetype = "dotted")
+  )
+
+print(p_sensitivity_trajectory)
+```
+- If the model were not very sensitive to the prior, then the blue line would stay almost flat and close to the black dashed line.
+- increasing the Beta prior parameter b pulls the posterior estimate downward across all values of a
+- Uncertainty becomes smaller for larger values of a
+- Dots = posterior mean
 
 
 #### parameter recovery
