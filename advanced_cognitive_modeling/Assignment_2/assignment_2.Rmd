@@ -7,6 +7,7 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "C:/02_STUDIE/8. SEMESTER/Data science/CogSci_MSc2") # REPLACE WITH LOCAL PATH
 ```
 
 ```{r}
@@ -38,7 +39,7 @@ opponents_choices = rbinom(trials, 1, 0.8)
 
 # parameters to be recovered
 alpha <- 0.8 # learning rate
-tau <- 1 # inverse temperatur
+tau <- 1 # inverse temperature
 
 simulate_rl_data <- function(trials, alpha, tau, opponents_choices){
 
@@ -52,6 +53,7 @@ V[1] = 0.5 # uninformed starting value
 p[1] <- 1 / (1 + exp(-tau * V[1])) # softmax - technically obsolete with a starting v of 0.5 and binary choice
 choices[1] <- rbinom(1, 1, p[1]) # making the first choice
 
+# second trial onward
 for (t in 2:trials) {
   
   # belief update (Rescorla-Wagner)
@@ -115,8 +117,6 @@ choice_distribution
 ```
 # Nadia: hello guys added this to help justify our priors
 ```{r}
-library(tidyverse)
-
 # x-grid 
 alpha_grid <- seq(0, 1, length.out = 1000)
 
@@ -242,20 +242,17 @@ generated quantities {
 
 
 # Define relative path for Stan model file
-#stan_model_dir <- "/Users/nadiahajighassem/Documents/GitHUb/CogSci_MSc2/advanced_cognitive_modeling/Assignment_2/stan"
 stan_model_dir <- "advanced_cognitive_modeling/Assignment_2/stan"
 stan_file_RL <- here(stan_model_dir, "RL_model.stan")
 
 # Create directory if needed
-if (!dir.exists(stan_model_dir)) dir.create(stan_model_dir)
+if (!dir.exists(stan_model_dir)) dir.create(stan_model_dir, recursive = TRUE)
 
 # Write the Stan code to the file
 writeLines(stan_model_code, stan_file_RL)
 
 cat("Stan model written to:", stan_file_RL, "\n")
 ```
-Had some trouble with the file- paths but it seems to work now
-
 ```{r}
 # Stan requires data in a list format
 data_for_stan <- list(
@@ -278,8 +275,8 @@ str(data_for_stan) # Show the structure of the list
 stan_file_RL <- here(stan_model_dir, "RL_model.stan")
 
 # Define path for saving fitted model object
-stan_results_dir <- "~/Documents/GitHub/CogSci_MSc2/advanced_cognitive_modeling/Assignment_2/simmodels"
-model_file_RL <- file.path(stan_results_dir, "RL_model1.rds")
+stan_results_dir <- "advanced_cognitive_modeling/Assignment_2/simmodels"
+model_file_RL <- file.path(stan_results_dir, "RL_model.rds")
 
 
 if (!dir.exists(stan_results_dir)) dir.create(stan_results_dir)
@@ -334,6 +331,7 @@ fit_summary <- fit_RL$summary(variables = c("alpha", "tau", "tau_scaled"))
 
 fit_summary[, c("variable", "mean", "rhat", "ess_bulk", "ess_tail")]
 ```
+
 ```{r}
 # 3. Visual Checks (Trace and Rank Plots) - For tau
 
@@ -369,8 +367,6 @@ p_rank <- mcmc_rank_hist(draws_df, pars = "alpha") +
 p_trace 
 p_rank
 ```
-
-
 
 ```{r}
 # 4. Look at the Posterior Estimate (Alpha)
