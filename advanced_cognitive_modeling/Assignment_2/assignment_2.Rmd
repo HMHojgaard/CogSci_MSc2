@@ -167,7 +167,49 @@ ggplot(beta_df, aes(x = alpha, y = density, color = prior)) +
   theme_minimal(base_size = 18)
 ```
 
+# plot for report
+```{r}
+library(tidyverse)
 
+# Generate x values
+x <- seq(0.001, 0.999, length.out = 1000)
+
+# Compute densities
+prior_df <- bind_rows(
+  tibble(
+    x       = x,
+    density = dbeta(x, 2, 2),
+    prior   = "α ~ Beta(2,2) — learning rate"
+  ),
+  tibble(
+    x       = x,
+    density = dbeta(x, 2, 8),
+    prior   = "τ ~ Beta(2,8) — inverse temperature"
+  )
+)
+
+# Plot
+ggplot(prior_df, aes(x = x, y = density, color = prior, fill = prior)) +
+  geom_line(linewidth = 1.2) +
+  geom_area(alpha = 0.15, position = "identity") +
+  scale_color_manual(values = c(
+    "α ~ Beta(2,2) — learning rate"              = "#378ADD",
+    "τ ~ Beta(2,8) — inverse temperature"  = "#1D9E75"
+  )) +
+  scale_fill_manual(values = c(
+    "α ~ Beta(2,2) — learning rate"              = "#378ADD",
+    "τ ~ Beta(2,8) — inverse temperature"  = "#1D9E75"
+  )) +
+  labs(
+    title   = "Prior distributions",
+    x       = "Parameter value (0 – 1)",
+    y       = "Density",
+    color   = NULL,
+    fill    = NULL
+  ) +
+  theme_ipsum() +
+  theme(legend.position = "bottom")
+```
 
 
 
