@@ -413,7 +413,6 @@ p_rank
 ```
 
 
-
 ```{r}
 # 4. Look at the Posterior Estimate (Alpha)
 ggplot(draws_df) +
@@ -627,6 +626,7 @@ fit_RL <- mod_RL$sample(
 
 fit_RL$save_object(file = model_file_RL)
 ```
+
 # model diagnostics
 ```{r}
 # Extract the summary and diagnostics from our fitted model object
@@ -884,8 +884,6 @@ print(p_sensitivity_trajectory)
 
 
 ```{r}
-
-
 recovery_grid <- tidyr::expand_grid(
   n_trials = c(100, 200, 300, 400), #varying ntrials
   true_alpha = c(0.5, 0.7, 0.9), # same alpha variation as the theta variation in course notes
@@ -900,7 +898,12 @@ if (regenerate_simulations || !file.exists(recovery_file)) {
   # 2. Define the isolated recovery pipeline
   run_recovery <- function(n_trials, true_alpha, true_tau) {
     # Generate synthetic empirical data
-    sim_opp <- rbinom(n = n_trials, size = 1, prob = 0.8) # Simulating the opponent THIS MIGHT NEED TO CHANGE TO MEET RICCARDOS SUGGESTION
+    # Shifting opponent scaled to n_trials
+    half <- n_trials %/% 2
+    sim_opp <- c(
+    rbinom(half,1, 0.2),
+    rbinom(n_trials - half, 1, 0.8)
+  ) # Simulating the opponent THIS MIGHT NEED TO CHANGE TO MEET RICCARDOS SUGGESTION
     sim_h <- simulate_rl_data(trials = n_trials, alpha = true_alpha, tau = true_tau, opponents_choices = sim_opp) # using our function
     
     
@@ -1034,5 +1037,5 @@ p_recovery_2d_alt <- ggplot(recovery_summary, aes(x = true_alpha, y = post_mean)
 
 print(p_recovery_2d_alt)
 ```
-The number of trials doesn't really seem to teach us much
+The number of trials doesn't really seem to teach us much. 
 
