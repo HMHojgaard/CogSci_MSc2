@@ -7,7 +7,6 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-knitr::opts_knit$set(root.dir = "C:/02_STUDIE/8. SEMESTER/Data science/CogSci_MSc2") # REPLACE WITH LOCAL PATH
 ```
 
 ```{r}
@@ -29,6 +28,7 @@ pacman::p_load(
 regenerate_simulations <- TRUE
 ```
 
+# Reinforcement Agent
 ```{r reinforcement agent}
 set.seed(123)
 
@@ -39,7 +39,7 @@ opponents_choices = rbinom(trials, 1, 0.8)
 
 # parameters to be recovered
 alpha <- 0.8 # learning rate
-tau <- 1 # inverse temperature
+tau <- 1 # inverse temperatur
 
 simulate_rl_data <- function(trials, alpha, tau, opponents_choices){
 
@@ -53,7 +53,6 @@ V[1] = 0.5 # uninformed starting value
 p[1] <- 1 / (1 + exp(-tau * V[1])) # softmax - technically obsolete with a starting v of 0.5 and binary choice
 choices[1] <- rbinom(1, 1, p[1]) # making the first choice
 
-# second trial onward
 for (t in 2:trials) {
   
   # belief update (Rescorla-Wagner)
@@ -97,7 +96,7 @@ df <- simulate_rl_data(trials=trials, alpha=alpha, tau=tau, opponents_choices = 
 ```
 
 
-Plotting similarly to in assignment 1
+### Plotting choice distribution for 500 trials. 
 
 ```{r}
 choice_distribution <- ggplot(df, aes(x = trial)) +
@@ -115,7 +114,8 @@ choice_distribution <- ggplot(df, aes(x = trial)) +
 choice_distribution
 
 ```
-# Nadia: hello guys added this to help justify our priors
+Plotting Beta distribution shapes for alpha prior
+
 ```{r}
 # x-grid 
 alpha_grid <- seq(0, 1, length.out = 1000)
@@ -124,8 +124,8 @@ alpha_grid <- seq(0, 1, length.out = 1000)
 beta_df <- bind_rows(
   tibble(
     alpha = alpha_grid,
-    density = dbeta(alpha_grid, 1, 1),
-    prior = "Beta(1,1)"
+    density = dbeta(alpha_grid, 1, 4),
+    prior = "Beta(1,4)"
   ),
   tibble(
     alpha = alpha_grid,
@@ -148,7 +148,7 @@ beta_df <- bind_rows(
 beta_df$prior <- factor(
   beta_df$prior,
   levels = c(
-    "Beta(1,1)",
+    "Beta(1,4)",
     "Beta(2,2)",
     "Beta(3,6)",
     "Beta(4,6)"
@@ -167,17 +167,50 @@ ggplot(beta_df, aes(x = alpha, y = density, color = prior)) +
   theme_minimal(base_size = 18)
 ```
 
+### Plotting priors for report
+```{r}
+# Generate x values
+x <- seq(0.001, 0.999, length.out = 1000)
+
+# Compute densities
+prior_df <- bind_rows(
+  tibble(
+    x       = x,
+    density = dbeta(x, 2, 2),
+    prior   = "α ~ Beta(2,2) — learning rate"
+  ),
+  tibble(
+    x       = x,
+    density = dbeta(x, 2, 8),
+    prior   = "τ ~ Beta(2,8) — inverse temperature"
+  )
+)
+
+# Plot
+ggplot(prior_df, aes(x = x, y = density, color = prior, fill = prior)) +
+  geom_line(linewidth = 1.2) +
+  geom_area(alpha = 0.15, position = "identity") +
+  scale_color_manual(values = c(
+    "α ~ Beta(2,2) — learning rate"              = "#378ADD",
+    "τ ~ Beta(2,8) — inverse temperature"  = "#1D9E75"
+  )) +
+  scale_fill_manual(values = c(
+    "α ~ Beta(2,2) — learning rate"              = "#378ADD",
+    "τ ~ Beta(2,8) — inverse temperature"  = "#1D9E75"
+  )) +
+  labs(
+    title   = "Prior distributions",
+    x       = "Parameter value (0 – 1)",
+    y       = "Density",
+    color   = NULL,
+    fill    = NULL
+  ) +
+  theme_ipsum() +
+  theme(legend.position = "bottom")
+```
 
 
-
-
-So the agent changes its expected value very quickly.
-
-Could also plot the relationship between V and p, which is determined by tau, and the relationship between correctness and V
-
-
-### writing the stan-code
-In the below i took from course notes 5.4 the structure of the r-to-stan pipeline and added own stan code based on whats in the docs, updated to hopefulle work
+# Writing the Stan-code
 
 ```{r}
 stan_model_code <- "
@@ -229,30 +262,75 @@ model {
 }
 
 generated quantities {
-  real<lower=0, upper=1> alpha_prior;
-  real<lower=0, upper=1> tau_prior;
-  real<lower=0, upper=20> tau_prior_scaled;
 
-  alpha_prior = beta_rng(prior_alpha_a, prior_alpha_b); // Not uniform - we expect most people to have a moderate learning rate
-  tau_prior = beta_rng(2, 8);
-  tau_prior_scaled = tau_prior * 20;
-  
-}
+  // Prior samples
+  real<lower=0, upper=1> alpha_prior = beta_rng(prior_alpha_a, prior_alpha_b);
+  real<lower=0, upper=1> tau_prior   = beta_rng(2, 8); 
+  real<lower=0, upper=20> tau_prior_scaled = tau_prior * 20;
+
+  // Prior Predictive Check 
+  array[n] real V_prior; // stores V at each trial while computing prior simulation
+  array[n] int  h_prior_rep; // stores simulated choices while computing prior simulation
+
+  V_prior[1] = 0.5;
+  h_prior_rep[1] = bernoulli_rng(0.5);
+
+  for (t in 2:n) {
+    V_prior[t] = V_prior[t-1] + alpha_prior * (feedback[t-1] - V_prior[t-1]);
+    real p_prior = 1 / (1 + exp(-tau_prior_scaled * V_prior[t]));
+    h_prior_rep[t] = bernoulli_rng(p_prior);
+  }
+
+  // total right choices from prior simulation (used for histo)
+  int prior_rep_sum = sum(h_prior_rep); 
+
+  // Posterior Predictive Check 
+  // same structure, but now with the posterior values of alpha and tau
+  array[n] real V_post;
+  array[n] int  h_post_rep;
+
+  V_post[1] = 0.5;
+  h_post_rep[1] = bernoulli_rng(0.5);
+
+  for (t in 2:n) {
+    V_post[t] = V_post[t-1] + alpha * (feedback[t-1] - V_post[t-1]);
+    real p_post = 1 / (1 + exp(-tau_scaled * V_post[t]));
+    h_post_rep[t] = bernoulli_rng(p_post);
+  }
+
+  int post_rep_sum = sum(h_post_rep);
+
+  // Log-likelihood
+  array[n] real log_lik;
+  log_lik[1] = bernoulli_lpmf(h[1] | 0.5);
+  for (t in 2:n) {
+    real V_ll;
+    V_ll = 0.5;
+    for (s in 2:t) {
+      V_ll = V_ll + alpha * (feedback[s-1] - V_ll);
+    }
+    real p_ll = 1 / (1 + exp(-tau_scaled * V_ll));
+    log_lik[t] = bernoulli_lpmf(h[t] | p_ll);
+  }
+} 
 "
 
 
 # Define relative path for Stan model file
+#stan_model_dir <- "/Users/nadiahajighassem/Documents/GitHUb/CogSci_MSc2/advanced_cognitive_modeling/Assignment_2/stan"
 stan_model_dir <- "advanced_cognitive_modeling/Assignment_2/stan"
 stan_file_RL <- here(stan_model_dir, "RL_model.stan")
 
 # Create directory if needed
-if (!dir.exists(stan_model_dir)) dir.create(stan_model_dir, recursive = TRUE)
+if (!dir.exists(stan_model_dir)) dir.create(stan_model_dir)
 
 # Write the Stan code to the file
 writeLines(stan_model_code, stan_file_RL)
 
 cat("Stan model written to:", stan_file_RL, "\n")
 ```
+
+
 ```{r}
 # Stan requires data in a list format
 data_for_stan <- list(
@@ -267,7 +345,9 @@ data_for_stan <- list(
 str(data_for_stan) # Show the structure of the list
 
 ```
-## fitting
+
+
+# Fitting
 
 ```{r}
 ## --- Compile and Fit ---
@@ -275,8 +355,8 @@ str(data_for_stan) # Show the structure of the list
 stan_file_RL <- here(stan_model_dir, "RL_model.stan")
 
 # Define path for saving fitted model object
-stan_results_dir <- "advanced_cognitive_modeling/Assignment_2/simmodels"
-model_file_RL <- file.path(stan_results_dir, "RL_model.rds")
+stan_results_dir <- "~/Documents/GitHub/CogSci_MSc2/advanced_cognitive_modeling/Assignment_2/simmodels"
+model_file_RL <- file.path(stan_results_dir, "RL_model1.rds")
 
 
 if (!dir.exists(stan_results_dir)) dir.create(stan_results_dir)
@@ -317,7 +397,7 @@ if (regenerate_simulations | !file.exists(model_file_RL)) {
 ```
 
 
-## Quality Assessment 
+# Quality Assessment 
 
 ```{r}
 # 1. Check for Divergent Transitions
@@ -340,7 +420,7 @@ draws_df <- as_draws_df(fit_RL$draws())
 # A healthy trace plot is well-mixed with no wandering
 p_trace <- mcmc_trace(draws_df, pars = "tau_scaled") + 
   theme_classic() + 
-  ggtitle("Trace Plot: Well-mixed chains")
+  ggtitle("Trace Plot: Well-mixed chains tau_scaled")
 
 # A healthy rank histogram has uniform bars across all chains
 p_rank <- mcmc_rank_hist(draws_df, pars = "tau_scaled") + 
@@ -357,7 +437,7 @@ p_rank
 # A healthy trace plot is well-mixed with no wandering
 p_trace <- mcmc_trace(draws_df, pars = "alpha") + 
   theme_classic() + 
-  ggtitle("Trace Plot: Well-mixed chains")
+  ggtitle("Trace Plot: Well-mixed chains alpha")
 
 # A healthy rank histogram has uniform bars across all chains
 p_rank <- mcmc_rank_hist(draws_df, pars = "alpha") + 
@@ -367,6 +447,7 @@ p_rank <- mcmc_rank_hist(draws_df, pars = "alpha") +
 p_trace 
 p_rank
 ```
+
 
 ```{r}
 # 4. Look at the Posterior Estimate (Alpha)
@@ -400,38 +481,160 @@ ggplot(draws_df) +
 ```
 So it seems the model has learned the tau with great precision but it is learning less about the alfa
 
+# Prior predictive check
+
+### Creating shifting bias agent and fitting model
 ```{r}
-# This codes was the first attempt at prior predictive checks - it doesnt work
-# Extract the summary statistic calculated from prior predictive simulations
-# 'prior_rep_sum' was calculated within the generated quantities block
+set.seed(42)
 
-# Ensure we have the draws as a dataframe
-#observed_sum <- sum(data_for_stan$h) # Total number of 'right' choices in the actual observed data
+# 1. Shifting opponent
+trials            <- 500
+shifting_opponent <- c(
+  rbinom(250, 1, 0.8),
+  rbinom(250, 1, 0.2)
+)
 
-#ppc_prior_ggplot <- ggplot(draws_df, aes(x = prior_rep_sum)) +
-  # Draw the histogram of the model's prior predictions (light red)
-#  geom_histogram(fill = "#ffbaba", color = "#ff5252", bins = 30, alpha = 0.8) +
-  
-  # Add the vertical line for the actual observed data (dark red)
- # geom_vline(xintercept = observed_sum, color = "darkred", linewidth = 1.2) +
-  
-  # Labels and theming
-  #ggtitle("Prior Predictive Check: Total 'Right' Choices") +
-  #xlab(paste("Total Number of 'Right' Choices (out of", trials, "trials)")) +
-  #ylab("Frequency") +
-  #theme_classic()
+# 2. Simulate agent data against shifting opponent
+alpha <- 0.8
+tau   <- 1
 
-#ppc_prior_ggplot
+df <- simulate_rl_data(
+  trials            = trials,
+  alpha             = alpha,
+  tau               = tau,
+  opponents_choices = shifting_opponent
+)
+
+# 3. Data for Stan
+data_for_stan <- list(
+  n             = trials,
+  h             = df$choice_numeric,
+  h_opponent    = shifting_opponent,
+  feedback      = shifting_opponent,
+  prior_alpha_a = 2,
+  prior_alpha_b = 2
+)
+
+# 4. Write Stan model to file
+stan_model_dir <- "~/Documents/GitHub/CogSci_MSc2/advanced_cognitive_modeling/Assignment_2/stan"
+stan_file_RL   <- here(stan_model_dir, "RL_model.stan")
+if (!dir.exists(stan_model_dir)) dir.create(stan_model_dir, recursive = TRUE)
+writeLines(stan_model_code, stan_file_RL)
+
+# 5. Compile and fit
+stan_results_dir <- "~/Documents/GitHub/CogSci_MSc2/advanced_cognitive_modeling/Assignment_2/simmodels"
+model_file_RL    <- file.path(stan_results_dir, "RL_model1.rds")
+if (!dir.exists(stan_results_dir)) dir.create(stan_results_dir, recursive = TRUE)
+
+mod_RL <- cmdstan_model(
+  stan_file_RL,
+  cpp_options   = list(stan_threads = FALSE),
+  stanc_options = list("O1")
+)
+
+fit_RL <- mod_RL$sample(
+  data            = data_for_stan,
+  seed            = 123,
+  chains          = 4,
+  parallel_chains = 4,
+  iter_warmup     = 1000,
+  iter_sampling   = 2000,
+  refresh         = 0,
+  max_treedepth   = 10,
+  adapt_delta     = 0.8
+)
+
+fit_RL$save_object(file = model_file_RL)
+```
+
+# Model Diagnostics
+```{r}
+# Extract the summary and diagnostics from our fitted model object
+fit_summary <- fit_RL$summary()
+diagnostic_summary <- fit_RL$diagnostic_summary()
+
+# 1. Check for Divergent Transitions (Zero Tolerance)
+divergences <- sum(diagnostic_summary$num_divergent)
+if (divergences > 0) {
+  stop(paste("CRITICAL FAILURE:", divergences, "divergences detected. The posterior geometry is pathological. Reparameterization required. Do not interpret these results."))
+}
+
+# 2. Check E-BFMI (Energy-Bayesian Fraction of Missing Information)
+# Threshold is typically 0.3. Values below this indicate poor exploration.
+min_ebfmi <- min(diagnostic_summary$ebfmi)
+if (min_ebfmi < 0.3) {
+  warning(paste("WARNING: Low E-BFMI detected (Min =", round(min_ebfmi, 3), 
+                "). The sampler may struggle to explore the tails of the posterior."))
+}
+
+# 3. Check for Convergence (Rhat < 1.01)
+max_rhat <- max(fit_summary$rhat, na.rm = TRUE)
+if (max_rhat > 1.01) {
+  stop(paste("CRITICAL FAILURE: Chains did not converge. Max Rhat =", round(max_rhat, 3)))
+}
+
+# 4. Check Effective Sample Size (ESS > 400 for both bulk and tail)
+min_ess_bulk <- min(fit_summary$ess_bulk, na.rm = TRUE)
+min_ess_tail <- min(fit_summary$ess_tail, na.rm = TRUE)
+if (min_ess_bulk < 400 || min_ess_tail < 400) {
+  warning("WARNING: Insufficient Effective Sample Size. Autocorrelation is too high. Run longer chains.")
+}
+
+# 5. Print summary for key parameters only
+fit_RL$summary(variables = c("alpha", "tau", "tau_scaled", "alpha_prior", "tau_prior"))
 ```
 
 
+### Plot for prior predictive check
+```{r}
+# Extract the summary statistic calculated from prior predictive simulations
+# 'prior_rep_sum' was calculated within the generated quantities block
+draws_gq <- as_draws_df(fit_RL$draws()) # Ensure we have the draws as a dataframe
+observed_sum <- sum(data_for_stan$h) # Total number of 'right' choices in the actual observed data
 
-So that is hard
-possibly it can be done
+ppc_prior_ggplot <- ggplot(draws_gq, aes(x = prior_rep_sum)) +
+  # Draw the histogram of the model's prior predictions (light red)
+  geom_histogram(fill = "#ffbaba", color = "#ff5252", bins = 30, alpha = 0.8) +
+  
+  # Add the vertical line for the actual observed data (dark red)
+  geom_vline(xintercept = observed_sum, color = "darkred", linewidth = 1.2) +
+  
+  # Labels and theming
+  ggtitle("Prior Predictive Check: Total 'Right' Choices") +
+  xlab(paste("Total Number of 'Right' Choices (out of", trials, "trials)")) +
+  ylab("Frequency") +
+  theme_classic()
 
+ppc_prior_ggplot
+```
 
+### Combined prior and posterior predictive check plot
+```{r}
+draws_gq <- as_draws_df(fit_RL$draws())
 
+predictive_df <- tibble(
+  Value = c(draws_gq$prior_rep_sum, draws_gq$post_rep_sum),
+  Type  = rep(c("Prior Predictive", "Posterior Predictive"), each = nrow(draws_gq))
+)
 
+ggplot(predictive_df, aes(x = Value, fill = Type)) +
+  geom_histogram(alpha = 0.6, color = "white", bins = 30) +
+  geom_vline(xintercept = sum(data_for_stan$h),
+             linetype = "dashed", linewidth = 1) +
+  scale_fill_manual(values = c(
+    "Prior Predictive"     = "gray70",
+    "Posterior Predictive" = "skyblue"
+  )) +
+  labs(
+    title = "Predictive Check: Total 'Right' Choices",
+    x     = paste("Total Number of 'Right' Choices (out of", trials, "trials)"),
+    y     = "Frequency"
+  ) +
+  theme_classic()
+```
+-----------------------
+
+### Prior sensitivity
 ```{r}
 #defining a grid of prior values to try - only for alpha right now, and since it is a beta prior there is an alpha and a beta parameter to vary
 prior_grid <- tidyr::expand_grid(
@@ -529,7 +732,7 @@ p_sensitivity_2d
 ```
 For some reason the impact of the prior is huge now - not good for the model but perhaps more indicative that the test is working
 
-# Prior sensitvity analysis - trajectory
+### Prior sensitvity analysis - trajectory
 
 This plot shows how the posterior mean of alpha and its credible intervals change when different priors are used for alpha.
 ```{r}
@@ -587,7 +790,7 @@ print(p_sensitivity_trajectory)
 - Dots = posterior mean
 
 
-#### parameter recovery
+# Parameter recovery
 
 ```{r}
 #code for testing how the simulate_rl_data function works before implementing it in the big loop below
@@ -601,8 +804,6 @@ print(p_sensitivity_trajectory)
 
 
 ```{r}
-
-
 recovery_grid <- tidyr::expand_grid(
   n_trials = c(100, 200, 300, 400), #varying ntrials
   true_alpha = c(0.5, 0.7, 0.9), # same alpha variation as the theta variation in course notes
@@ -617,7 +818,12 @@ if (regenerate_simulations || !file.exists(recovery_file)) {
   # 2. Define the isolated recovery pipeline
   run_recovery <- function(n_trials, true_alpha, true_tau) {
     # Generate synthetic empirical data
-    sim_opp <- rbinom(n = n_trials, size = 1, prob = 0.8) # Simulating the opponent THIS MIGHT NEED TO CHANGE TO MEET RICCARDOS SUGGESTION
+    # Shifting opponent scaled to n_trials
+    half <- n_trials %/% 2
+    sim_opp <- c(
+    rbinom(half,1, 0.2),
+    rbinom(n_trials - half, 1, 0.8)
+  ) # Simulating the opponent THIS MIGHT NEED TO CHANGE TO MEET RICCARDOS SUGGESTION
     sim_h <- simulate_rl_data(trials = n_trials, alpha = true_alpha, tau = true_tau, opponents_choices = sim_opp) # using our function
     
     
@@ -673,7 +879,7 @@ if (regenerate_simulations || !file.exists(recovery_file)) {
 ```
 
 ```{r}
-# plotting the paramenter revcovery MIGHT NEED ADJSUTMENT OF AXES
+# plotting the parameter revcovery MIGHT NEED ADJSUTMENT OF AXES
 # 4. Compress draws into rigorous posterior summaries
 recovery_summary <- recovery_draws |> 
   dplyr::group_by(trials, true_alpha) |> 
@@ -751,5 +957,5 @@ p_recovery_2d_alt <- ggplot(recovery_summary, aes(x = true_alpha, y = post_mean)
 
 print(p_recovery_2d_alt)
 ```
-The number of trials doesn't really seem to teach us much
+The number of trials doesn't really seem to teach us much. 
 
