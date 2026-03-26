@@ -205,7 +205,7 @@ ggplot(prior_df, aes(x = x, y = density, color = prior, fill = prior)) +
     color   = NULL,
     fill    = NULL
   ) +
-  theme_ipsum() +
+  #theme_ipsum() +
   theme(legend.position = "bottom")
 ```
 
@@ -890,7 +890,7 @@ recovery_summary <- recovery_draws |>
     .groups = "drop"
   ) |> 
   dplyr::mutate(
-    facet_label = paste0("Ground Truth: \u03b8 = ", true_alpha)
+    facet_label = paste0("Ground Truth: alpha = ", true_alpha)
   )
 
 # 5. Visualize the geometric shrinkage across the parameter space
@@ -957,5 +957,5 @@ p_recovery_2d_alt <- ggplot(recovery_summary, aes(x = true_alpha, y = post_mean)
 
 print(p_recovery_2d_alt)
 ```
-The number of trials doesn't really seem to teach us much. 
+The number of trials doesn't seem to teach us much. 
 
