@@ -28,6 +28,7 @@ pacman::p_load(
 df <- read.csv("~/Documents/GitHub/CogSci_MSc2/advanced_cognitive_modeling/Assignment_3/cogsci_clean.csv")
 ```
 
+## Data Stats
 
 
 
