@@ -19,18 +19,25 @@ pacman::p_load(
   posterior,    # Posterior analysis
   bayesplot,    # Plotting MCMC
   furrr,        # Parallel processing
-  future        # Future backend
+  future,        # Future backend
+  here
 )
 ```
 
 ## Load in data
 ```{r}
-df <- read.csv("~/Documents/GitHub/CogSci_MSc2/advanced_cognitive_modeling/Assignment_3/cogsci_clean.csv")
+df <- read.csv(here("advanced_cognitive_modeling/Assignment_3/cogsci_clean.csv"))
 ```
 
 ## Data Stats
-
-
+```{r}
+#Participant & Stimuli count
+df %>% 
+  summarise(
+    id_count = n_distinct(ID), #ID 33 is missing
+    stim_count = n_distinct(FaceID) #FaceID starts from no. 2
+  )
+```
 
 ## Simple Bayes Agent (SBA)
 ```{r}
@@ -130,4 +137,252 @@ write_stan_file(WeightedAgentRaw_stan,
                 basename = "ch9_weighted_agent_raw.stan")
 ```
 
+```{r}
+#simulating
+
+# Create the full factorial design
+evidence_combinations <- expand_grid(
+  first_rating  = 1:8,   # Direct evidence: 0-8 blue marbles out of 8
+  group_rating  = 1:8,
+  max_rating = 8,     # Fixed sample size for direct evidence      # Fixed "sample size" for social evidence
+)
+
+# This gives us 9 × 4 = 36 unique evidence combinations
+cat("Unique evidence combinations:", nrow(evidence_combinations), "\n")
+```
+
+```{r}
+evidence_combinations
+```
+
+```{r}
+cat("With 5 repetitions each:", nrow(evidence_combinations) * 5, "trials per agent\n")
+```
+
+```{r}
+N <- 80 #number of faces
+
+first_rating <- runif(N, 1, 8)
+group_rating <- runif(N, 1, 8)
+```
+
+
+
+```{r}
+# Core belief-update function implementing the Beta-Binomial integration model
+betaBinomialModel <- function(alpha_prior = 0.5, beta_prior = 0.5,
+                              first_rating, group_rating, max_rating, #changed it to one max rating and the name
+                              w_direct = 1, w_social = 1) {
+  
+  alpha_post <- alpha_prior + w_direct * first_rating + w_social * group_rating
+  beta_post  <- beta_prior  + w_direct * (max_rating - first_rating) +
+    w_social * (max_rating - group_rating)
+  
+  expected_rate <- alpha_post / (alpha_post + beta_post)
+  ci_lower      <- qbeta(0.025, alpha_post, beta_post)
+  ci_upper      <- qbeta(0.975, alpha_post, beta_post)
+  
+  list(
+    alpha_post    = alpha_post,
+    beta_post     = beta_post,
+    expected_rate = expected_rate,
+    ci_lower      = ci_lower,
+    ci_upper      = ci_upper
+  )
+}
+
+# Function to generate decisions from a simulated agent
+generate_agent_decisions <- function(weight_direct, weight_social,
+                                     evidence_df, n_samples = 80) {
+  evidence_df |>
+    slice(rep(seq_len(n()), each = n_samples)) |>
+    group_by(first_rating, group_rating, max_rating) |>
+    mutate(sample_id = seq_len(n())) |>
+    ungroup() |>
+    pmap_dfr(function(first_rating, group_rating, max_rating, sample_id) {
+      result <- betaBinomialModel(
+        0.5, 0.5, first_rating, group_rating, max_rating,
+        w_direct = weight_direct, w_social = weight_social
+      )
+      # Probability matching: sample θ from Beta, then sample choice from Bernoulli(θ)
+      alpha_p <- result$alpha_post
+      beta_p  <- result$beta_post
+      p       <- rbeta(1, alpha_p, beta_p)
+      tibble(
+        sample_id     = sample_id,
+        first_rating  = first_rating,
+        group_rating  = group_rating,
+        max_rating    = max_rating,
+        expected_rate = result$expected_rate,
+        second_rating       = rbinom(1, 8, p)
+      )
+    })
+}
+
+prepare_stan_data <- function(df) {
+  list(
+    N             = nrow(df),
+    second_rating = df$second_rating,
+    first_rating  = df$first_rating,
+    max_rating    = df$max_rating,
+    group_rating  = df$group_rating
+  )
+}
+
+```
+
+
+```{r}
+# Calculate SBA predictions for all evidence combinations
+sim_data <- evidence_combinations |>
+  pmap_dfr(function(first_rating, group_rating, max_rating) {
+    result <- betaBinomialModel(0.5, 0.5, first_rating, group_rating, max_rating)
+    tibble(
+      first_rating  = first_rating,
+      group_rating  = group_rating,
+      expected_rate = result$expected_rate,
+      ci_lower      = result$ci_lower,
+      ci_upper      = result$ci_upper
+    )
+  })
+
+
+
+ggplot(sim_data,
+       aes(x = first_rating, y = expected_rate,
+           colour = group_rating, group = group_rating)) +
+  geom_ribbon(aes(ymin = ci_lower, ymax = ci_upper,
+                  fill = group_rating), alpha = 0.15, colour = NA) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 3) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", colour = "grey50") +
+  scale_x_continuous(breaks = 0:8) +
+  #scale_colour_manual(values = semantic_colors) +
+  #scale_fill_manual(values = semantic_colors) +
+  coord_cartesian(ylim = c(0, 1)) +
+  labs(
+    title    = "Simple Bayesian Agent: Evidence Integration",
+    subtitle = "Expected proportion with 95% credible intervals | Weights fixed at (1, 1)",
+    x        = "first rating out of 8",
+    y        = "Expected rate",
+    colour   = "Group rating",
+    fill     = "Group rating"
+  ) +
+  theme(legend.position = "bottom")
+```
+
+
+# 10.7
+```{r}
+agents <- tibble(
+  agent_type    = c("Self-Focused", "Balanced", "Socially-Influenced"),
+  weight_direct = c(1.5, 1.0, 0.5),
+  weight_social = c(0.5, 1.0, 2.0)
+)
+
+# Generate simulated data for all three agent types
+simulation_results <- agents |>
+  pmap_dfr(function(agent_type, weight_direct, weight_social) {
+    generate_agent_decisions(weight_direct, weight_social,
+                             evidence_combinations, n_samples = 5) |>
+      mutate(agent_type = agent_type)
+  }) |>
+  mutate(
+    agent_type = factor(
+      agent_type,
+      levels = c("Self-Focused", "Balanced", "Socially-Influenced")
+    )
+  )
+
+# Summarize for plotting
+plot_summary <- simulation_results |>
+  group_by(agent_type, first_rating, group_rating) |>
+  summarise(
+    theoretical_p = mean(expected_rate)*7+1,
+    empirical_p   = mean(second_rating),
+    .groups = "drop"
+  )
+
+# Visualize
+ggplot(plot_summary, aes(x = first_rating, colour = group_rating, group = group_rating)) +
+  geom_line(aes(y = theoretical_p), linewidth = 1.2, alpha = 0.5) +
+  geom_line(aes(y = empirical_p), linetype = "dashed", linewidth = 0.8) +
+  geom_point(aes(y = empirical_p), size = 2) +
+  geom_hline(yintercept = 0.5, linetype = "dotted", colour = "grey30") +
+  facet_wrap(~ agent_type) +
+  #scale_colour_manual(values = semantic_colors) +
+  scale_x_continuous(breaks = 0:8) +
+  coord_cartesian(ylim = c(1, 8)) +
+  labs(
+    title = "Weighted Bayesian Agents: Three Scenarios",
+    subtitle = "Solid faded = Internal Belief | Dashed = Observed Choice Proportions (N=5 per condition)",
+    x = "Blue marbles in direct sample (out of 8)",
+    y = "Second rating",
+    colour = "Social evidence"
+  ) +
+  theme(legend.position = "bottom",
+        strip.background = element_blank(),
+        strip.text = element_text(face = "bold", size = 11))
+```
+
+```{r}
+mod_simple       <- cmdstan_model("stan/ch9_simple_agent.stan")
+mod_weighted_raw <- cmdstan_model("stan/ch9_weighted_agent_raw.stan")
+
+sampler_args <- list(
+  chains = 4, 
+  parallel_chains = 4, 
+  iter_warmup = 1000, 
+  iter_sampling = 1000, 
+  refresh = 0
+)
+```
+
+```{r}
+# True values for the three WBA scenarios
+true_wba <- list(
+  Self_Focused        = list(wd = 1.5, ws = 0.5),
+  Balanced            = list(wd = 1.0, ws = 1.0),
+  Socially_Influenced = list(wd = 0.5, ws = 2.0)
+)
+
+# Generate simulated data for each scenario
+stan_data_wba <- map(true_wba, function(params) {
+  sim <- generate_agent_decisions(
+    params$wd, params$ws, 
+    evidence_combinations, 
+    n_samples = 5
+  ) |> mutate(total1 = 8L, total2 = 3L)
+  prepare_stan_data(sim)
+})
+```
+
+```{r}
+regenerate_simulations <- TRUE
+```
+
+
+```{r}
+fit_sba_paths <- here::here(
+  "simmodels",
+  paste0("ch9_fit_sba_", names(stan_data_wba), ".rds")
+) |> set_names(names(stan_data_wba))
+
+if (regenerate_simulations || !all(file.exists(fit_sba_paths))) {
+  fit_sba <- imap(stan_data_wba, function(data, scenario) {
+    fit <- mod_simple$sample(
+      data          = data,
+      chains        = 2,
+      iter_warmup   = 0,
+      iter_sampling = 1000,
+      fixed_param   = TRUE,
+      refresh       = 0
+    )
+    fit$save_object(fit_sba_paths[[scenario]])
+    fit
+  })
+} else {
+  fit_sba <- map(fit_sba_paths, readRDS)
+}
+```
 
