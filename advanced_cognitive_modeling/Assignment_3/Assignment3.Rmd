@@ -106,7 +106,7 @@ generate_agent_decisions <- function(weight_direct, weight_social,
         0.5, 0.5, first_rating, group_rating, max_rating,
         w_direct = weight_direct, w_social = weight_social
       )
-      # Probability matching: sample θ from Beta, then sample choice from Bernoulli(θ)
+      # Probability matching: sample θ from Beta, then sample second_rating from Bernoulli(θ)
       alpha_p <- result$alpha_post
       beta_p  <- result$beta_post
       p       <- rbeta(1, alpha_p, beta_p)
@@ -217,7 +217,7 @@ ggplot(plot_summary, aes(x = first_rating, colour = group_rating, group = group_
   coord_cartesian(ylim = c(1, 8)) +
   labs(
     title = "Weighted Bayesian Agents: Three Scenarios",
-    subtitle = "Solid faded = Internal Belief | Dashed = Observed Choice Proportions (N=5 per condition)",
+    subtitle = "Solid faded = Internal Belief | Dashed = Observed second_rating Proportions (N=5 per condition)",
     x = "First rating (1 to 8)",
     y = "Second rating (1 to 8)",
     colour = "Social evidence"
@@ -355,8 +355,8 @@ generated quantities {
     real beta_post  = 0.5 + weight_direct * (7 - first_rating_transformed[i]) 
                          + weight_social * (7 - group_rating_transformed[i]);
 
-    log_lik[i]        = beta_binomial_lpmf(second_rating_transformed[i] | 1, alpha_post, beta_post);
-    posterior_pred[i] = beta_binomial_rng(1, alpha_post, beta_post);
+    log_lik[i]        = beta_binomial_lpmf(second_rating_transformed[i] | 7, alpha_post, beta_post);
+    posterior_pred[i] = beta_binomial_rng(7, alpha_post, beta_post) + 1;
     
   //prior predictions using sampled prior weights
     real ap = 0.5 + wd_prior * first_rating_transformed[i] + ws_prior * group_rating_transformed[i];
@@ -404,6 +404,10 @@ stan_data_wba <- map(true_wba, function(params) {
 })
 ```
 
+```{r}
+regenerate_simulations = TRUE
+```
+
 
 ```{r}
 fit_sba_paths <- here::here(
@@ -428,6 +432,9 @@ if (regenerate_simulations || !all(file.exists(fit_sba_paths))) {
   fit_sba <- map(fit_sba_paths, readRDS)
 }
 ```
+# 
+sba has no parameters to fit so we do not check sampling diagnostics
+
 
 
 
@@ -447,8 +454,272 @@ stan_data_wba_reparam <- map(true_wba_reparam, function(params) {
 })
 ```
 
+
 ```{r}
-regenerate_simulations <- TRUE
+#removed PBA - pssibly replace PBA part with SBA from above at some point
+if (regenerate_simulations || !all(file.exists(sprintf("simmodels/ch10_fit_wba_%s.rds", names(stan_data_wba))))) {
+  # --- Fit WBA reparameterised ---
+  fit_wba <- map2(stan_data_wba_reparam, 204:206, function(data, seed) {
+    do.call(mod_weighted$sample,
+            c(list(data = data, seed = seed), sampler_args))
+  })
+  names(fit_wba) <- names(stan_data_wba_reparam)
+  iwalk(fit_wba, ~ .x$save_object(
+    sprintf("simmodels/ch10_fit_wba_%s.rds", .y)
+  ))
+} else {
+  fit_wba <- map(
+    names(stan_data_wba_reparam),
+    ~ readRDS(sprintf("simmodels/ch10_fit_wba_%s.rds", .x))
+  ) |> set_names(names(stan_data_wba_reparam))
+}
+```
+
+```{r}
+# Check diagnostics
+check_diagnostics <- function(fit, label) {
+  diag_smry <- fit$diagnostic_summary()
+  min_ebfmi <- min(diag_smry$ebfmi)
+  
+  smry <- fit$summary() |> filter(!is.na(rhat))
+  n_fail <- smry |> filter(rhat > 1.01 | ess_bulk < 400 | ess_tail < 400) |> nrow()
+  
+  cat(sprintf("%-25s | Divs: %3d | Min E-BFMI: %.2f | Failures: %d\n", 
+              label, sum(diag_smry$num_divergent), min_ebfmi, n_fail))
+}
+```
+
+```{r}
+purrr::iwalk(fit_wba, ~ check_diagnostics(.x, paste("WBA", .y)))
+```
+Fit looks good for all 3
+
+
+```{r}
+## prior/posterior predictive checks
+# Generalized Extraction Function for Posteriors
+extract_predictive_data <- function(fit, stan_data, scenario_name, target_var = "posterior_pred") {
+  obs_df <- tibble(
+    obs_id = seq_len(stan_data$N),
+    first_rating  = stan_data$first_rating,
+    group_rating  = stan_data$group_rating,
+    second_rating = stan_data$second_rating
+  )
+
+  pred_samples <- posterior::as_draws_df(fit$draws(target_var)) |>
+    dplyr::select(-.chain, -.iteration) |> 
+    tidyr::pivot_longer(
+      cols = dplyr::starts_with(target_var), 
+      names_to = "obs_id", 
+      values_to = "pred"
+    ) |>
+    dplyr::mutate(obs_id = readr::parse_number(obs_id))
+
+  obs_summary <- obs_df |>
+    dplyr::group_by(first_rating, group_rating) |>
+    dplyr::summarise(p_obs = mean(second_rating), .groups = "drop")
+
+  pred_summary <- pred_samples |>
+    dplyr::left_join(obs_df, by = "obs_id") |>
+    dplyr::group_by(.draw, first_rating, group_rating) |>
+    dplyr::summarise(p_draw = mean(pred), .groups = "drop") |>
+    dplyr::group_by(first_rating, group_rating) |>
+    dplyr::summarise(
+      p_pred = median(p_draw),
+      lower  = quantile(p_draw, 0.025),
+      upper  = quantile(p_draw, 0.975),
+      .groups = "drop"
+    ) |>
+    dplyr::left_join(obs_summary, by = c("first_rating", "group_rating")) |>
+    dplyr::mutate(
+            social_evidence = factor(
+        group_rating, levels = 1:8,
+        labels = c("1", "2", "3", "4", "5", "6", "7", "8")
+      ),
+      Scenario = scenario_name
+    )
+  
+  return(pred_summary)
+}
+```
+
+
+
+
+```{r}
+# Standardized Plotting Function
+plot_predictive_check <- function(plot_data, title, subtitle) {
+  
+  semantic_colors <- c("1"  = "#d73027", "3"  = "#fdae61",
+                       "5" = "#abd9e9", "7" = "#4575b4",
+                       "2"  = "#d73027", "4"  = "#fdae61",
+                       "6" = "#abd9e9", "8" = "#4575b4")
+  
+  ggplot(plot_data, 
+         aes(x = first_rating, colour = social_evidence, fill = social_evidence)) +
+    geom_linerange(aes(ymin = lower+1, ymax = upper+1),
+                   position = position_dodge(width = 0.6), 
+                   alpha = 0.5, linewidth = 2) +
+    geom_line(aes(y = p_pred+1), 
+              position = position_dodge(width = 0.6), 
+              linewidth = 1) +
+    geom_point(aes(y = p_obs), 
+               shape = 21, colour = "black", stroke = 0.8, size = 2,
+               position = position_dodge(width = 0.6)) +
+    facet_wrap(~ Scenario) +
+    scale_color_manual(values = semantic_colors) +
+    scale_fill_manual(values = semantic_colors) +
+    scale_x_continuous(breaks = 0:8) +
+    coord_cartesian(ylim = c(1,8)) +
+    labs(
+      title    = title,
+      subtitle = subtitle,
+      x        = "First rating",
+      y        = "Second rating",
+      colour   = "Social evidence", 
+      fill     = "Social evidence"
+    ) +
+    theme_bw() +
+    theme(legend.position = "bottom",
+          strip.text = element_text(face = "bold", size = 11))
+}
+```
+
+
+
+
+```{r}
+
+
+# Extract predictions for the SBA
+# Extract SBA posterior predictive checks across all three scenarios
+sba_post_ppc <- imap_dfr(fit_sba, function(fit, scenario) {
+  extract_predictive_data(
+    fit = fit,
+    stan_data = stan_data_wba[[scenario]],
+    scenario_name = scenario,
+    target_var = "posterior_pred"
+  )
+})
+
+# Plot SBA across all three datasets
+plot_predictive_check(
+  sba_post_ppc,
+  title = "Posterior Predictive Checks: Simple Bayesian Agent",
+  subtitle = "SBA fits the Balanced dataset but misses the other two systematically"
+)
+
+```
+
+```{r}
+# Custom R function to generate Prior predictions for the raw model
+generate_wba_raw_prior <- function(stan_data, scenario_name, n_draws = 4000) {
+  
+  obs_df <- tibble(
+    obs_id = seq_len(stan_data$N),
+    first_rating  = stan_data$first_rating,
+    group_rating  = stan_data$group_rating,
+    second_rating = stan_data$second_rating
+  )
+
+  # 1. Draw parameters from the priors defined in the raw Stan model
+  wd_prior <- rlnorm(n_draws, 0, 0.5)
+  ws_prior <- rlnorm(n_draws, 0, 0.5)
+
+  # 2. Simulate second_ratings across all draws and observations
+  pred_samples <- expand_grid(.draw = 1:n_draws, obs_id = obs_df$obs_id) |>
+    left_join(obs_df, by = "obs_id") |>
+    mutate(
+      wd = wd_prior[.draw],
+      ws = ws_prior[.draw],
+      alpha_post = 0.5 + wd * first_rating + ws * group_rating,
+      beta_post  = 0.5 + wd * (8 - first_rating) + ws * (8 - group_rating),
+      
+      # Probability matching: sample belief, then sample second_rating
+      theta = rbeta(n(), alpha_post, beta_post),
+      pred  = rbinom(n(), 7, theta)
+    )
+
+  # 3. Summarize in the exact same format as the posterior function
+  obs_summary <- obs_df |>
+    group_by(first_rating, group_rating) |>
+    summarise(p_obs = mean(second_rating), .groups = "drop")
+
+  pred_summary <- pred_samples |>
+    group_by(.draw, first_rating, group_rating) |>
+    summarise(p_draw = mean(pred), .groups = "drop") |>
+    group_by(first_rating, group_rating) |>
+    summarise(
+      p_pred = median(p_draw),
+      lower  = quantile(p_draw, 0.025),
+      upper  = quantile(p_draw, 0.975),
+      .groups = "drop"
+    ) |>
+    left_join(obs_summary, by = c("first_rating", "group_rating")) |>
+    mutate(
+        social_evidence = factor(
+        group_rating, levels = 1:8,
+        labels = c("1", "2", "3", "4", "5", "6", "7", "8")
+      ),
+      Scenario = scenario_name
+    )
+
+  return(pred_summary)
+}
+
+# Extract PRIOR predictive checks by simulating in R
+wba_prior_ppc <- imap_dfr(stan_data_wba, ~ generate_wba_raw_prior(.x, .y))
+
+# Plot PRIOR
+plot_predictive_check(
+  wba_prior_ppc,
+  title = "Prior Predictive Checks: WBA",
+  subtitle = "Lines/Bars = Predicted second rating from Prior alone ± 95% CI | Circles = Observed"
+)
+```
+
+
+```{r}
+# Extract POSTERIOR predictive checks for WBA Raw
+wba_post_ppc <- imap_dfr(fit_wba, function(fit, scenario) {
+  extract_predictive_data(
+    fit = fit, 
+    stan_data = stan_data_wba[[scenario]], 
+    scenario_name = scenario,
+    target_var = "posterior_pred"
+  )
+})
+
+# Plot POSTERIOR
+plot_predictive_check(
+  wba_post_ppc,
+  title = "Posterior Predictive Checks: WBA",
+  subtitle = "Lines/Bars = Predicted second rating after fitting ± 95% CI | Circles = Observed"
+)
+```
+
+#### FIT THE REAL DATA
+
+```{r}
+df_renamed <- df %>% 
+  rename(first_rating = FirstRating, 
+         group_rating = GroupRating,
+         second_rating = SecondRating
+         )
+
+df_renamed <- df_renamed %>% 
+  mutate(max_rating = 8
+         )
+
+df_cleaned <- df_renamed %>% 
+  filter(group_rating != 0)
+
+```
+
+
+```{r}
+df_stan <- prepare_stan_data(df_cleaned)
+df_stan
 ```
 
 ```{r}
@@ -464,84 +735,26 @@ if (regenerate_simulations || !all(file.exists(sprintf("simmodels/ch10_fit_wba_%
     sprintf("simmodels/ch10_fit_wba_%s.rds", .y)
   ))
 } else {
-  fit_pba <- map(
-    names(stan_data_pba),
-    ~ readRDS(sprintf("simmodels/ch10_fit_pba_%s.rds", .x))
-  ) |> set_names(names(stan_data_pba))
-
   fit_wba <- map(
     names(stan_data_wba_reparam),
     ~ readRDS(sprintf("simmodels/ch10_fit_wba_%s.rds", .x))
   ) |> set_names(names(stan_data_wba_reparam))
 }
-
-# Check diagnostics
-cat("\n=== Proportional Bayesian Agent ===\n")
 ```
 
 
 ```{r}
-fit_wba_paths <- here::here(
-  "simmodels",
-  paste0("ch10_fit_wba_", names(stan_data_wba_reparam), ".rds")
-) |> set_names(names(stan_data_wba_reparam))
-
-if (regenerate_simulations || !all(file.exists(fit_wba_paths))) {
-  seeds <- set_names(101:103, names(stan_data_wba))
-
-  fit_wba <- imap(stan_data_wba_reparam, function(data, scenario) {
-    fit <- do.call(
-      mod_weighted$sample,
-      c(list(data = data, seed = seeds[[scenario]]), sampler_args)
-    )
-    # $save_object() internalises the CSV draws so the file is
-    # self-contained. Plain saveRDS() would store dangling pointers
-    # to temporary CSVs that no longer exist in a new session.
-    fit$save_object(fit_wba_paths[[scenario]])
-    fit
-  })
-} else {
-  fit_wba <- map(fit_wba_paths, readRDS)
-}
-# Check diagnostics
-check_diagnostics <- function(fit, label) {
-  diag_smry <- fit$diagnostic_summary()
-  min_ebfmi <- min(diag_smry$ebfmi)
-  
-  smry <- fit$summary() |> filter(!is.na(rhat))
-  n_fail <- smry |> filter(rhat > 1.01 | ess_bulk < 400 | ess_tail < 400) |> nrow()
-  
-  cat(sprintf("%-25s | Divs: %3d | Min E-BFMI: %.2f | Failures: %d\n", 
-              label, sum(diag_smry$num_divergent), min_ebfmi, n_fail))
-}
-
-cat("\n=== Weighted Bayesian Agent (ReParameterisation) ===\n")
-
-
-```
-
-
-```{r}
-fit_sba_paths <- here::here(
-  "simmodels",
-  paste0("ch9_fit_sba_", names(stan_data_wba_reparam), ".rds")
-) |> set_names(names(stan_data_wba_reparam))
-
-if (regenerate_simulations || !all(file.exists(fit_sba_paths))) {
-  fit_sba <- imap(stan_data_wba_reparam, function(data, scenario) {
-    fit <- mod_simple$sample(
-      data          = data,
-      chains        = 2,
-      iter_warmup   = 0,
+fit <- mod_simple$sample(
+      data          = df_stan,
+      chains        = 4,
+      iter_warmup   = 1000,
       iter_sampling = 1000,
       fixed_param   = TRUE,
       refresh       = 0
     )
-    fit$save_object(fit_sba_paths[[scenario]])
-    fit
-  })
-} else {
-  fit_sba <- map(fit_sba_paths, readRDS)
-}
+```
+
+```{r}
+purrr::iwalk(fit, ~ check_diagnostics(.x, paste("WBA", .y)))
 ```
 
