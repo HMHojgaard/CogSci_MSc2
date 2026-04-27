@@ -24,7 +24,7 @@ pacman::p_load(
 )
 ```
 
-## Load in data
+## Load in empirical data
 ```{r}
 df <- read.csv(here("advanced_cognitive_modeling/Assignment_3/cogsci_clean.csv"))
 ```
@@ -39,8 +39,9 @@ df %>%
   )
 ```
 
+
+## Simulating data
 ```{r}
-#simulating
 
 # Create the full factorial design
 evidence_combinations <- expand_grid(
@@ -69,7 +70,6 @@ group_rating <- runif(N, 1, 8)
 ```
 
 
-
 ```{r}
 # Core belief-update function implementing the Beta-Binomial integration model
 betaBinomialModel <- function(alpha_prior = 0.5, beta_prior = 0.5,
@@ -93,6 +93,9 @@ betaBinomialModel <- function(alpha_prior = 0.5, beta_prior = 0.5,
   )
 }
 
+```
+
+```{r}
 # Function to generate decisions from a simulated agent
 generate_agent_decisions <- function(weight_direct, weight_social,
                                      evidence_df, n_samples = 80) {
@@ -120,7 +123,9 @@ generate_agent_decisions <- function(weight_direct, weight_social,
       )
     })
 }
+```
 
+```{r}
 prepare_stan_data <- function(df) {
   list(
     N             = nrow(df),
@@ -148,8 +153,7 @@ sim_data <- evidence_combinations |>
     )
   })
 
-
-
+# Plotting sim_data
 ggplot(sim_data,
        aes(x = first_rating, y = expected_rate,
            colour = group_rating, group = group_rating)) +
@@ -173,8 +177,7 @@ ggplot(sim_data,
   theme(legend.position = "bottom")
 ```
 
-
-# 10.7
+## 10.7
 ```{r}
 agents <- tibble(
   agent_type    = c("Self-Focused", "Balanced", "Socially-Influenced"),
@@ -385,6 +388,8 @@ sampler_args <- list(
   refresh = 0
 )
 ```
+
+
 ```{r}
 # True values for the three WBA scenarios
 true_wba <- list(
@@ -432,10 +437,8 @@ if (regenerate_simulations || !all(file.exists(fit_sba_paths))) {
   fit_sba <- map(fit_sba_paths, readRDS)
 }
 ```
-# 
-sba has no parameters to fit so we do not check sampling diagnostics
-
-
+ 
+*Note:* SBA has no parameters to fit so we do not check sampling diagnostics
 
 
 ```{r}
@@ -456,7 +459,7 @@ stan_data_wba_reparam <- map(true_wba_reparam, function(params) {
 
 
 ```{r}
-#removed PBA - pssibly replace PBA part with SBA from above at some point
+#removed PBA - possibly replace PBA part with SBA from above at some point
 if (regenerate_simulations || !all(file.exists(sprintf("simmodels/ch10_fit_wba_%s.rds", names(stan_data_wba))))) {
   # --- Fit WBA reparameterised ---
   fit_wba <- map2(stan_data_wba_reparam, 204:206, function(data, seed) {
@@ -492,7 +495,7 @@ check_diagnostics <- function(fit, label) {
 ```{r}
 purrr::iwalk(fit_wba, ~ check_diagnostics(.x, paste("WBA", .y)))
 ```
-Fit looks good for all 3
+*Note:* Fit looks good for all 3
 
 
 ```{r}
