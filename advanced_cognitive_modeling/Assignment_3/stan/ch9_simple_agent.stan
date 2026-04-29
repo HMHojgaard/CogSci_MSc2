@@ -40,7 +40,7 @@ generated quantities {
     real beta_post  = 0.5 + (7 - first_rating_transformed[i]) + (7 - group_rating_transformed[i]);
 
     log_lik[i]        = beta_binomial_lpmf(second_rating_transformed[i] | 7, alpha_post, beta_post);
-    posterior_pred[i] = beta_binomial_rng(7, alpha_post, beta_post);
+    posterior_pred[i] = beta_binomial_rng(7, alpha_post, beta_post) +1;
   }
 }
 
