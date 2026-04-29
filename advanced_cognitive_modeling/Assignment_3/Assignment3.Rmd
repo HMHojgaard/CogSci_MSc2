@@ -867,23 +867,72 @@ print(loo_wba)
 
 
 
+```{r}
+# prior posterior update with simulated data - from the course notes
+wba_prior <- tibble(
+  rho = rbeta(4000, 2, 2), 
+  kappa = rlnorm(4000, log(2), 0.5), 
+  Scenario = "Prior"
+)
+
+wba_posteriors <- imap_dfr(fit_wba, function(fit, name) {
+  as_draws_df(fit$draws(c("rho", "kappa"))) |> 
+    as_tibble() |> 
+    select(rho, kappa) |> 
+    mutate(Scenario = name)
+})
+
+wba_true_df <- map_dfr(true_wba_reparam, ~ as_tibble(.x[c("rho", "kappa")]), .id = "Scenario") |>
+  pivot_longer(c(rho, kappa), names_to = "parameter", values_to = "true_value")
+
+bind_rows(wba_prior, wba_posteriors) |>
+  pivot_longer(c(rho, kappa), names_to = "parameter", values_to = "value") |>
+  mutate(Scenario = factor(Scenario, 
+                           levels = c("Prior", "Balanced", "Self_Focused", "Socially_Influenced"))) |>
+  ggplot(aes(x = value, fill = Scenario, color = Scenario)) +
+  geom_density(alpha = 0.3, linewidth = 1) +
+  geom_vline(data = wba_true_df, 
+             aes(xintercept = true_value, color = Scenario), 
+             linetype = "dashed", linewidth = 1.2, show.legend = FALSE,
+             inherit.aes = FALSE) +
+  facet_wrap(~ parameter, scales = "free") +
+  scale_fill_manual(values = c("Prior" = "grey80", "Balanced" = "#4daf4a", 
+                               "Self_Focused" = "#e41a1c", "Socially_Influenced" = "#377eb8")) +
+  scale_color_manual(values = c("Prior" = "grey50", "Balanced" = "#4daf4a", 
+                                "Self_Focused" = "#e41a1c", "Socially_Influenced" = "#377eb8")) +
+  labs(
+    title = "✓ WBA Parameter Recovery", 
+    subtitle = "rho (relative weight) recovers ok; kappa (total scale) has wider uncertainty as expected",
+    x = "Parameter Value", 
+    y = "Density"
+  ) + 
+  theme(legend.title = element_blank())
+```
+
+```{r}
+# Prior posterior update for the wba with real data
+wba_prior <- tibble(
+  rho = rbeta(4000, 2, 2), 
+  kappa = rlnorm(4000, log(2), 0.5), 
+  Scenario = "Prior"
+)
+
+wba_posteriors <- fit_wba_empirical |>
+  as_draws_df(fit$draws(c("rho", "kappa"))) |> 
+    as_tibble() |> 
+    select(rho, kappa) |> 
+    mutate(Scenario = "Posterior")
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+bind_rows(wba_prior, wba_posteriors) |>
+  pivot_longer(c(rho, kappa), names_to = "parameter", values_to = "value") |>
+  ggplot(aes(x = value, fill = Scenario, color = Scenario)) +
+  geom_density(alpha = 0.3, linewidth = 1) +
+  facet_wrap(~ parameter, scales = "free") +
+  labs(
+    title = "Empirical WBA Prior-Posterior update", 
+    x = "Parameter Value", 
+    y = "Density"
+  ) + 
+  theme(legend.title = element_blank())
+```
