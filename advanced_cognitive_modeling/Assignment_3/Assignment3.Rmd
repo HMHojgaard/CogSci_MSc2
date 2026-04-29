@@ -20,7 +20,8 @@ pacman::p_load(
   bayesplot,    # Plotting MCMC
   furrr,        # Parallel processing
   future,        # Future backend
-  here
+  here,
+  loo
 )
 ```
 
@@ -274,7 +275,7 @@ generated quantities {
     real beta_post  = 0.5 + (7 - first_rating_transformed[i]) + (7 - group_rating_transformed[i]);
 
     log_lik[i]        = beta_binomial_lpmf(second_rating_transformed[i] | 7, alpha_post, beta_post);
-    posterior_pred[i] = beta_binomial_rng(7, alpha_post, beta_post);
+    posterior_pred[i] = beta_binomial_rng(7, alpha_post, beta_post) +1;
   }
 }
 "
@@ -375,7 +376,7 @@ write_stan_file(WeightedAgent_stan,
 ```
 
 
-
+## Compiling Stan
 ```{r}
 mod_simple       <- cmdstan_model("stan/ch9_simple_agent.stan")
 mod_weighted     <- cmdstan_model("stan/ch9_weighted_agent.stan")
@@ -383,8 +384,8 @@ mod_weighted     <- cmdstan_model("stan/ch9_weighted_agent.stan")
 sampler_args <- list(
   chains = 4, 
   parallel_chains = 4, 
-  iter_warmup = 1000, 
-  iter_sampling = 1000, 
+  iter_warmup = 1000,      #Low?
+  iter_sampling = 1000,    #Low?
   refresh = 0
 )
 ```
@@ -413,7 +414,7 @@ stan_data_wba <- map(true_wba, function(params) {
 regenerate_simulations = TRUE
 ```
 
-
+## Fitting SBA
 ```{r}
 fit_sba_paths <- here::here(
   "advanced_cognitive_modeling/Assignment_3/simmodels",
@@ -425,8 +426,8 @@ if (regenerate_simulations || !all(file.exists(fit_sba_paths))) {
     fit <- mod_simple$sample(
       data          = data,
       chains        = 2,
-      iter_warmup   = 0,
-      iter_sampling = 1000,
+      iter_warmup   = 1000,
+      iter_sampling = 4000, 
       fixed_param   = TRUE,
       refresh       = 0
     )
@@ -442,7 +443,7 @@ if (regenerate_simulations || !all(file.exists(fit_sba_paths))) {
 
 
 ```{r}
-# True values for the three WBA scenarios
+# True values for the three WBA reparameterized scenarios
 
 true_wba_reparam <- list(
   Self_Focused        = list(rho = 0.75, kappa = 2.0, wd = 1.5, ws = 0.5),
@@ -455,13 +456,13 @@ stan_data_wba_reparam <- map(true_wba_reparam, function(params) {
                                   evidence_combinations, n_samples = 5)
   prepare_stan_data(sim)
 })
+
 ```
 
-
+## Fitting WBA reparameterized 
 ```{r}
-#removed PBA - possibly replace PBA part with SBA from above at some point
 if (regenerate_simulations || !all(file.exists(sprintf("simmodels/ch10_fit_wba_%s.rds", names(stan_data_wba))))) {
-  # --- Fit WBA reparameterised ---
+  # --- Fit WBA reparameterized ---
   fit_wba <- map2(stan_data_wba_reparam, 204:206, function(data, seed) {
     do.call(mod_weighted$sample,
             c(list(data = data, seed = seed), sampler_args))
@@ -477,7 +478,7 @@ if (regenerate_simulations || !all(file.exists(sprintf("simmodels/ch10_fit_wba_%
   ) |> set_names(names(stan_data_wba_reparam))
 }
 ```
-
+## WBA reparameterized model diagnostics
 ```{r}
 # Check diagnostics
 check_diagnostics <- function(fit, label) {
@@ -493,13 +494,12 @@ check_diagnostics <- function(fit, label) {
 ```
 
 ```{r}
-purrr::iwalk(fit_wba, ~ check_diagnostics(.x, paste("WBA", .y)))
+purrr::iwalk(fit_wba, ~ check_diagnostics(.x, paste("WBA Reparam", .y)))
 ```
 *Note:* Fit looks good for all 3
 
-
+## Prior & Posterior predictive checks
 ```{r}
-## prior/posterior predictive checks
 # Generalized Extraction Function for Posteriors
 extract_predictive_data <- function(fit, stan_data, scenario_name, target_var = "posterior_pred") {
   obs_df <- tibble(
@@ -546,9 +546,6 @@ extract_predictive_data <- function(fit, stan_data, scenario_name, target_var = 
 }
 ```
 
-
-
-
 ```{r}
 # Standardized Plotting Function
 plot_predictive_check <- function(plot_data, title, subtitle) {
@@ -560,10 +557,10 @@ plot_predictive_check <- function(plot_data, title, subtitle) {
   
   ggplot(plot_data, 
          aes(x = first_rating, colour = social_evidence, fill = social_evidence)) +
-    geom_linerange(aes(ymin = lower+1, ymax = upper+1),
+    geom_linerange(aes(ymin = lower, ymax = upper),
                    position = position_dodge(width = 0.6), 
                    alpha = 0.5, linewidth = 2) +
-    geom_line(aes(y = p_pred+1), 
+    geom_line(aes(y = p_pred), 
               position = position_dodge(width = 0.6), 
               linewidth = 1) +
     geom_point(aes(y = p_obs), 
@@ -588,13 +585,8 @@ plot_predictive_check <- function(plot_data, title, subtitle) {
 }
 ```
 
-
-
-
+## Extract predictions for the SBA
 ```{r}
-
-
-# Extract predictions for the SBA
 # Extract SBA posterior predictive checks across all three scenarios
 sba_post_ppc <- imap_dfr(fit_sba, function(fit, scenario) {
   extract_predictive_data(
@@ -680,10 +672,10 @@ plot_predictive_check(
   subtitle = "Lines/Bars = Predicted second rating from Prior alone ± 95% CI | Circles = Observed"
 )
 ```
-
+*Note:* Is it the plot or our priors? 
 
 ```{r}
-# Extract POSTERIOR predictive checks for WBA Raw
+# Extract POSTERIOR predictive checks for WBA 
 wba_post_ppc <- imap_dfr(fit_wba, function(fit, scenario) {
   extract_predictive_data(
     fit = fit, 
@@ -701,7 +693,7 @@ plot_predictive_check(
 )
 ```
 
-#### FIT THE REAL DATA
+#### Prepare empirical data for stan
 
 ```{r}
 df_renamed <- df %>% 
@@ -719,45 +711,179 @@ df_cleaned <- df_renamed %>%
 
 ```
 
+```{r}
+df_cleaned <- df_renamed %>% 
+  filter(group_rating != 0) %>% 
+  mutate(
+    first_rating = as.integer(first_rating),
+    group_rating = as.integer(group_rating),
+    second_rating = as.integer(second_rating),
+    max_rating = 8L
+  )
+```
+
 
 ```{r}
 df_stan <- prepare_stan_data(df_cleaned)
 df_stan
 ```
 
+## Fit SBA to empirical data
 ```{r}
-#removed PBA - pssibly replace PBA part with SBA from above at some point
-if (regenerate_simulations || !all(file.exists(sprintf("simmodels/ch10_fit_wba_%s.rds", names(stan_data_wba))))) {
-  # --- Fit WBA reparameterised ---
-  fit_wba <- map2(stan_data_wba_reparam, 204:206, function(data, seed) {
-    do.call(mod_weighted$sample,
-            c(list(data = data, seed = seed), sampler_args))
-  })
-  names(fit_wba) <- names(stan_data_wba_reparam)
-  iwalk(fit_wba, ~ .x$save_object(
-    sprintf("simmodels/ch10_fit_wba_%s.rds", .y)
-  ))
+## Fit SBA to empirical data
+fit_sba_empirical_path <- here::here(
+  "advanced_cognitive_modeling/Assignment_3/simmodels",
+  "ch10_fit_sba_empirical.rds"
+)
+
+if (regenerate_simulations || !file.exists(fit_sba_empirical_path)) {
+  
+  fit_sba_empirical <- do.call(
+    mod_simple$sample,
+    c(
+      list(data = df_stan, seed = 207),
+      sampler_args,
+      fixed_param = TRUE
+    )
+  )
+  
+  fit_sba_empirical$save_object(fit_sba_empirical_path)
+  
 } else {
-  fit_wba <- map(
-    names(stan_data_wba_reparam),
-    ~ readRDS(sprintf("simmodels/ch10_fit_wba_%s.rds", .x))
-  ) |> set_names(names(stan_data_wba_reparam))
+  fit_sba_empirical <- readRDS(fit_sba_empirical_path)
+}
+```
+*Note:* We can't do model diagnostics, because fixed_param = TRUE
+
+## Fit WBA to empirical data
+```{r}
+## Fit WBA to empirical data
+fit_wba_empirical_path <- here::here(
+  "advanced_cognitive_modeling/Assignment_3/simmodels",
+  "ch10_fit_wba_empirical.rds"
+)
+
+if (regenerate_simulations || !file.exists(fit_wba_empirical_path)) {
+  
+  fit_wba_empirical <- do.call(
+    mod_weighted$sample,
+    c(
+      list(data = df_stan, seed = 207),
+      sampler_args
+    )
+  )
+  
+  fit_wba_empirical$save_object(fit_wba_empirical_path)
+  
+} else {
+  fit_wba_empirical <- readRDS(fit_wba_empirical_path)
 }
 ```
 
+*Note:* Is this warning troubling?
+
+Chain 1 Informational Message: The current Metropolis proposal is about to be rejected because of the following issue:
+Chain 1 Exception: ch9_weighted_agent_model_namespace::log_prob: weight_social is nan, but must be greater than or equal to 0.000000 (in '/var/folders/zh/yn1dyvpd7qg1qt08qcp_qmgw0000gn/T/RtmpjueWL8/model-c92533cb02a2.stan', line 32, column 2 to column 52)
+Chain 1 If this warning occurs sporadically, such as for highly constrained variable types like covariance matrices, then the sampler is fine,
+Chain 1 but if this warning occurs often then your model may be either severely ill-conditioned or misspecified.
 
 ```{r}
-fit <- mod_simple$sample(
-      data          = df_stan,
-      chains        = 4,
-      iter_warmup   = 1000,
-      iter_sampling = 1000,
-      fixed_param   = TRUE,
-      refresh       = 0
-    )
+check_diagnostics(fit_wba_empirical, "WBA empirical")
 ```
 
+
+## SBA Predictive Checks
+
 ```{r}
-purrr::iwalk(fit, ~ check_diagnostics(.x, paste("WBA", .y)))
+#No prior for SBA
+
+# Extract SBA posterior predictive checks on empirical data
+empirical_sba_post_ppc <-
+  extract_predictive_data(
+    fit = fit_sba_empirical,
+    stan_data = df_stan,
+    scenario_name = "SBA Empirical Data",
+    target_var = "posterior_pred"
+  )
+
+# Plot SBA across all three datasets
+plot_predictive_check(
+  empirical_sba_post_ppc,
+  title = "Posterior Predictive Checks: Simple Bayesian Agent",
+  subtitle = "SBA fitted on empirical dataset"
+)
+
 ```
+*Note:* Unsure about the validity of this plot. 
+
+## WBA Predictive Checks
+```{r}
+# Extract PRIOR predictive checks for WBA
+empirical_wba_prior_ppc <- generate_wba_raw_prior(df_stan, "WBA Empirical")
+
+# Plot PRIOR
+plot_predictive_check(
+  empirical_wba_prior_ppc,
+  title = "Prior Predictive Checks: WBA",
+  subtitle = "Lines/Bars = Predicted second rating from Prior alone ± 95% CI | Circles = Observed"
+)
+```
+*Note:* Why are there so few data points?  
+
+
+```{r}
+# Extract WBA posterior predictive checks on empirical data
+empirical_wba_post_ppc <-
+  extract_predictive_data(
+    fit = fit_wba_empirical,
+    stan_data = df_stan,
+    scenario_name = "WBA Empirical Data",
+    target_var = "posterior_pred"
+  )
+
+# Plot WBA across all three datasets
+plot_predictive_check(
+  empirical_wba_post_ppc,
+  title = "Posterior Predictive Checks: Weighted Bayesian Agent",
+  subtitle = "WBA fitted on empirical dataset"
+)
+
+```
+*Note:* Social influence is not influencing. 
+
+## Model Comparison 
+```{r}
+
+loglik_sba <- sum(fit_sba_empirical$draws("log_lik", format = "matrix")[1, ])
+
+loo_wba <- loo::loo(
+  fit_wba_empirical$draws("log_lik", format = "matrix")
+)
+
+cat("SBA total log likelihood:", loglik_sba, "\n")
+print(loo_wba)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
