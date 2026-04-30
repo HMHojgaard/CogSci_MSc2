@@ -34,7 +34,7 @@ transformed parameters {
 
 model {
   // weakly centered prior for rho
-  target += beta_lpdf(rho |  2,2); 
+  target += beta_lpdf(rho |  1,1); 
   
   //lognormal prior for kappa, concetration aroun .5 to 5
   target += lognormal_lpdf(kappa | log(2), 0.5); 
@@ -54,10 +54,10 @@ generated quantities {
   array[N] int posterior_pred;
   real lprior;
   //accumulator for joint prior log density required by priorsense
-  lprior = beta_lpdf(rho | 2,2) + lognormal_lpdf(kappa | log(2),0.5);
+  lprior = beta_lpdf(rho | 1,1) + lognormal_lpdf(kappa | log(2),0.5);
   
   //prior samples for predictive checks
-  real rho_prior = beta_rng(2,2);
+  real rho_prior = beta_rng(1,1);
   real kappa_prior = lognormal_rng(log(2),0.5);
   real wd_prior = rho_prior * kappa_prior;
   real ws_prior = (1-rho_prior) * kappa_prior;
