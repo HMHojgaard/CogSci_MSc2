@@ -1,0 +1,50 @@
+---
+title: "Assignment 3 - Aliens"
+author: "Study Group 6"
+date: "2026-04-30"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Setup
+```{r}
+# Loading required packages
+pacman::p_load(
+  tidyverse,    # Data manipulation and plotting
+  here,         # Robust file paths
+  cmdstanr,     # Stan interface
+  posterior,    # Posterior analysis
+  bayesplot,    # Plotting MCMC
+  furrr,        # Parallel processing
+  future,       # Future backend
+  here,
+  loo
+)
+```
+
+## Load in empirical data
+```{r}
+df <- read.csv(here("advanced_cognitive_modeling/Assignment_4/AlienData.txt"))
+```
+
+
+```{r}
+head(df)
+names(df)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
