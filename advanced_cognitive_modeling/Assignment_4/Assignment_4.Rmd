@@ -22,7 +22,9 @@ pacman::p_load(
   future,       # Future backend
   here,
   loo,
-  patchwork
+  patchwork,
+  MCMCpack,
+  hexbin
 )
 ```
 
@@ -125,9 +127,9 @@ gcm_simulate <- function(w,            # attention weights (sums to 1)
 
 
 ```{r}
-stimulus_info <- df %>%
-  select(stimulus, feature1, feature2, feature3, feature4, feature5, dangerous) %>%
-  unique() %>%
+stimulus_info <- df |>
+  dplyr::select(stimulus, feature1, feature2, feature3, feature4, feature5, dangerous) |>
+  unique() |>
   rename(category_true = dangerous)
 ```
 
@@ -302,9 +304,10 @@ p_w_effect
 ```
 ## Prior Predictive Check
 
-*Note: * should we change the weight priors to actual random draws here??
-
 ```{r}
+
+w <- rdirichlet(1, c(1,1,1,1,1))
+
 n_prior_samples <- 500
 
 LOG_C_PRIOR_MEAN <- log(2)
@@ -313,11 +316,11 @@ LOG_C_PRIOR_SD <- 1
 prior_draws <- tibble(
   sample_id = seq_len(n_prior_samples),
   log_c     = rnorm(n_prior_samples, LOG_C_PRIOR_MEAN, LOG_C_PRIOR_SD),
-  w1        = 0.2,
-  w2        = 0.2,
-  w3        = 0.2,
-  w4        = 0.2,
-  w5        = 0.2,
+  w1        = w[1],
+  w2        = w[2],
+  w3        = w[3],
+  w4        = w[4],
+  w5        = w[5],
   bias      = rbeta(n_prior_samples, 1, 1)
 ) |>
   mutate(c_true = exp(log_c))
@@ -370,7 +373,7 @@ ggplot(prior_pred_summary, aes(x = trial)) +
   scale_y_continuous(limits = c(0, 1)) +
   labs(
     title    = "Prior Predictive Check: GCM Learning Curves",
-    subtitle = "Ribbons: 50% and 90% prior predictive intervals; line: median\nPriors: log(c) ~ Normal(log 2, 1),  w ~ Dirichlet(1,1),  bias ~ Beta(1,1)",
+    subtitle = "Ribbons: 50% and 90% prior predictive intervals; line: median\nPriors: log(c) ~ Normal(log 2, 1),  w ~ Dirichlet(1,1,1,1,1),  bias ~ Beta(1,1)",
     x = "Trial", y = "Cumulative Accuracy"
   )
 ```
@@ -494,7 +497,7 @@ mod_gcm_single <- cmdstan_model(stan_file_gcm_single)
 # Select one simulated agent: w ≈ (0.9, 0.1), c ≈ 2
 agent_to_fit <- simulated_responses |>
   filter(
-    round(w4_true, 1) == 0.6,
+    round(w4_true, 1) == 0.2,
     abs(log_c_true - log(2.0)) == min(abs(log_c_true - log(2.0)))
   ) |>
   filter(agent_id == min(agent_id)) |>
@@ -519,22 +522,22 @@ gcm_data_single <- list(
 fit_filepath_single <- here("advanced_cognitive_modeling/Assignment_4/simmodels", "ch12_gcm_single_fit.rds")
 
 if (regenerate_simulations || !file.exists(fit_filepath_single)) {
-  pf_single <- tryCatch(
-    mod_gcm_single$pathfinder(
-      data      = gcm_data_single,
-      seed      = 123,
-      num_paths = 4,
-      refresh   = 0
-    ),
-    error = function(e) {
-      message("Pathfinder failed — falling back to default initialisation.")
-      NULL
-    }
-  )
+#  pf_single <- tryCatch(
+ #   mod_gcm_single$pathfinder(
+  #    data      = gcm_data_single,
+   #   seed      = 123,
+    #  num_paths = 4,
+     # refresh   = 0
+#    ),
+ #   error = function(e) {
+  #    message("Pathfinder failed — falling back to default initialisation.")
+   #   NULL
+    #}
+#  )
 
   fit_gcm_single <- mod_gcm_single$sample(
     data            = gcm_data_single,
-    init            = pf_single,
+    #init            = pf_single,
     seed            = 123,
     chains          = 4,
     parallel_chains = min(4, availableCores()),
@@ -551,12 +554,28 @@ if (regenerate_simulations || !file.exists(fit_filepath_single)) {
 }
 ```
 ## Diagnostics
-
 ```{r}
 fit_gcm_single$summary()
 ```
 
-*Note:* we cannot find diagnostic_summary_table function in the course notes. Maybe alter diagnostic function from ass3.
+```{r}
+# Check diagnostics
+check_diagnostics <- function(fit, label) {
+  diag_smry <- fit$diagnostic_summary()
+  min_ebfmi <- min(diag_smry$ebfmi)
+  
+  smry <- fit$summary() |> filter(!is.na(rhat))
+  n_fail <- smry |> filter(rhat > 1.01 | ess_bulk < 400 | ess_tail < 400) |> nrow()
+  
+  cat(sprintf("%-25s | Divs: %3d | Min E-BFMI: %.2f | Failures: %d\n", 
+              label, sum(diag_smry$num_divergent), min_ebfmi, n_fail))
+}
+```
+
+```{r}
+check_diagnostics(fit_gcm_single, "simulated single agent fit")
+```
+
 
 ```{r}
 bayesplot::mcmc_trace(
@@ -611,7 +630,8 @@ if (!is.null(fit_gcm_single)) {
 ```
 ## Prior-Posterior update check
 
-*Note: * Wrap plots to grid. Fix W4 plot, estimate is way off.
+*Note: * w4 still not really updating - also the prior is very informative? are we really supposed to use this
+
 
 ```{r}
 if (!is.null(fit_gcm_single)) {
@@ -631,7 +651,12 @@ if (!is.null(fit_gcm_single)) {
   set.seed(2026)
   n_prior <- 4000
   prior_df <- tibble(
-    `w[1]` = runif(n_prior),
+    w_prior = rdirichlet(n_prior, c(1,1,1,1,1)),
+    `w[1]` = w_prior[,1],
+    `w[2]` = w_prior[,2],
+    `w[3]` = w_prior[,3],
+    `w[4]` = w_prior[,4],
+    `w[5]` = w_prior[,5],
     log_c  = rnorm(n_prior, LOG_C_PRIOR_MEAN, LOG_C_PRIOR_SD),
     c      = exp(log_c),
     bias   = rbeta(n_prior, 1, 1)
@@ -654,34 +679,21 @@ if (!is.null(fit_gcm_single)) {
   }
 
   p1_1 <- pp_panel(prior_df$`w[1]`, draws_df$`w[1]`, true_w1, "w[1]")
-  p1_2 <- pp_panel(prior_df$`w[1]`, draws_df$`w[2]`, true_w2, "w[2]")
-  p1_3 <- pp_panel(prior_df$`w[1]`, draws_df$`w[3]`, true_w3, "w[3]")
-  p1_4 <- pp_panel(prior_df$`w[1]`, draws_df$`w[4]`, true_w4, "w[4]")
-  p1_5 <- pp_panel(prior_df$`w[1]`, draws_df$`w[5]`, true_w5, "w[5]")
+  p1_2 <- pp_panel(prior_df$`w[2]`, draws_df$`w[2]`, true_w2, "w[2]")
+  p1_3 <- pp_panel(prior_df$`w[3]`, draws_df$`w[3]`, true_w3, "w[3]")
+  p1_4 <- pp_panel(prior_df$`w[4]`, draws_df$`w[4]`, true_w4, "w[4]")
+  p1_5 <- pp_panel(prior_df$`w[5]`, draws_df$`w[5]`, true_w5, "w[5]")
   p2 <- pp_panel(prior_df$log_c,  draws_df$log_c,  true_log_c, "log(c) — computational scale")
   p3 <- pp_panel(prior_df$c,      draws_df$c,      true_c,     "c — natural scale")
   p4 <- pp_panel(prior_df$bias,   draws_df$bias,   true_bias,  "bias")
 
-# p1_1
-# p1_2
-# p1_3
-# p1_4
-# p1_5
-# p2
-# p3
-# p4
-
-# One of these might work :)))))
-(p1_1 | p1_2 | p1_3) /
-(p1_4 | p1_5 | p2) /ss
-(p3   | p4)
 
 wrap_plots(
-  p1_1, p1_2, p1_3,
-  p1_4, p1_5, p2,
-  p3, p4,
-  ncol = 3
+  p1_1, p1_2, p1_3, p1_4, 
+  p1_5, p2, p3, p4,
+  ncol = 4
 )
+}
 
 ```
 ## Joint posterior geometry
@@ -689,8 +701,6 @@ wrap_plots(
 *Note: * is this too wrong?
 
 ```{r}
-#install.packages('hexbin')
-library(hexbin)
 if (!is.null(fit_gcm_single)) {
   bayesplot::mcmc_pairs(
     fit_gcm_single$draws(c("log_c", "w[1]", "w[2]", "w[3]", "w[4]", "w[5]", "bias")),
@@ -701,158 +711,83 @@ if (!is.null(fit_gcm_single)) {
 ```
 ## LOO
 
-*Note: * Cannot run, gives error about pathfinder. Unable to retrieve generated quantities. Maybe try pf_single instead of pf
+*note: * do we need the loo
 
-```{r}
-# ─────────────────────────────────────────────────────────────────────────────
-# psis_lfo_gcm: PSIS-approximated leave-future-out CV for the GCM.
-# Follows Bürkner, Gabry, & Vehtari (2020), Algorithm 1.
-# ─────────────────────────────────────────────────────────────────────────────
-psis_lfo_gcm <- function(stan_model,
-                         full_data,
-                         L = 16,
-                         k_thresh = 0.7,
-                         seed = 1,
-                         verbose = FALSE) {
-
-  fit_subset <- function(n_train, seed) {
-    sub_data <- full_data
-    sub_data$N_total      <- n_train
-    sub_data$y            <- sub_data$y[1:n_train]
-    sub_data$obs          <- sub_data$obs[1:n_train, , drop = FALSE]
-    sub_data$cat_feedback <- sub_data$cat_feedback[1:n_train]
-
-    pf  <- stan_model$pathfinder(data = sub_data, num_paths = 4, refresh = 0,
-                                  seed = seed)
-    fit <- stan_model$sample(
-      data = sub_data, init = pf, seed = seed,
-      chains = 2, parallel_chains = 2,
-      iter_warmup = 600, iter_sampling = 800,
-      refresh = 0, adapt_delta = 0.9
-    )
-    fit
-  }
-
-  predict_future <- function(fit, full_data) {
-    full_n   <- length(full_data$y)
-    ext_data <- full_data
-    ext_data$N_total <- full_n
-
-    gq_fit <- stan_model$generate_quantities(
-      fitted_params   = fit,
-      data            = ext_data,
-      seed            = seed,
-      parallel_chains = 2
-    )
-    gq_fit$draws("log_lik", format = "matrix")
-  }
-
-  T_total      <- length(full_data$y)
-  elpd_lfo     <- numeric(T_total)
-  elpd_lfo[]   <- NA_real_
-  refits       <- integer(0)
-  k_history    <- numeric(0)
-
-  fit_curr     <- fit_subset(L, seed = seed)
-  ll_full_curr <- predict_future(fit_curr, full_data)
-
-  refits       <- c(refits, L)
-  last_fit_n   <- L
-  n_draws      <- nrow(ll_full_curr)
-
-  ll_train_curr <- rowSums(ll_full_curr[, 1:L, drop = FALSE])
-
-  for (t in (L + 1):T_total) {
-    if (t - 1 == last_fit_n) {
-      k_t          <- 0
-      k_history[t] <- k_t
-      lw           <- rep(-log(n_draws), n_draws)
-    } else {
-      ll_train_target <- rowSums(ll_full_curr[, 1:(t - 1), drop = FALSE])
-      log_w           <- ll_train_target - ll_train_curr
-
-      psis_obj     <- loo::psis(log_w, r_eff = NA)
-      k_t          <- loo::pareto_k_values(psis_obj)
-      k_history[t] <- k_t
-
-      if (k_t > k_thresh) {
-        if (verbose) cat("Refit at t =", t, "(k =", round(k_t, 3), ")\n")
-        fit_curr      <- fit_subset(t - 1, seed = seed + t)
-        ll_full_curr  <- predict_future(fit_curr, full_data)
-        ll_train_curr <- rowSums(ll_full_curr[, 1:(t - 1), drop = FALSE])
-        last_fit_n    <- t - 1
-        refits        <- c(refits, last_fit_n)
-        lw            <- rep(-log(n_draws), n_draws)
-      } else {
-        lw <- as.numeric(weights(psis_obj))
-      }
-    }
-
-    lp          <- ll_full_curr[, t]
-    elpd_lfo[t] <- matrixStats::logSumExp(lw + lp)
-  }
-
-  list(
-    elpd_lfo       = sum(elpd_lfo, na.rm = TRUE),
-    elpd_pointwise = elpd_lfo,
-    refits         = refits,
-    k_history      = k_history,
-    L              = L
-  )
-}
-```
-
-
-```{r}
-lfo_filepath <- here("simdata", "ch12_lfo_single.rds")
-if (regenerate_simulations || !file.exists(lfo_filepath)) {
-  lfo_single <- psis_lfo_gcm(
-    stan_model = mod_gcm_single,
-    full_data  = gcm_data_single,
-    L          = 16,
-    k_thresh   = 0.7,
-    seed       = 11,
-    verbose    = TRUE
-  )
-  saveRDS(lfo_single, lfo_filepath)
-} else {
-  lfo_single <- readRDS(lfo_filepath)
-}
-
-cat("LFO-CV ELPD (single subject):", round(lfo_single$elpd_lfo, 2), "\n")
-
-cat("Number of refits:",             length(lfo_single$refits),     "\n")
-
-cat("Refit triggered at trials:",    lfo_single$refits,             "\n")
-```
-```{r}
-if (!is.null(fit_gcm_single)) {
-  loo_pw  <- loo_gcm_single$pointwise[, "elpd_loo"]
-  comp_df <- tibble(
-    trial    = seq_along(loo_pw),
-    elpd_loo = loo_pw,
-    elpd_lfo = lfo_single$elpd_pointwise
-  ) |>
-    pivot_longer(starts_with("elpd_"), names_to = "method", values_to = "elpd")
-
-  ggplot(comp_df, aes(x = trial, y = elpd, color = method)) +
-    geom_line(alpha = 0.7) +
-    geom_point(alpha = 0.5) +
-    scale_color_manual(values = c(elpd_loo = "#0072B2", elpd_lfo = "#D55E00"),
-                       labels = c("PSIS-LFO (correct)",
-                                  "PSIS-LOO (invalid for sequential)")) +
-    labs(
-      title    = "Per-trial ELPD: LOO vs LFO-CV",
-      subtitle = "Differences are largest where the path-dependence assumption fails most",
-      x = "Trial", y = "Pointwise ELPD"
-    ) +
-    theme(legend.position = "bottom")
-}
-```
 
 ## Fitting model to empirical data
 
-*Note: * We are supposed to fit the model by participant, how do we do that?
+*Note: * We are supposed to fit the model by participant, how do we do that? - do we need to do the quality check 
+```{r}
+for (id in df$subject){
+  empirical_agent_to_fit <- df |>
+    filter(
+      subject == id
+    )
+  
+  fit
+  
+  save summary
+}
+```
+
+
+
+```{r}
+for (id in ????){
+  empirical_agent_to_fit <- df |>
+    filter(
+      subject == 1
+    )
+
+  empirical_gcm_data_single <- list(
+    N_total           = nrow(empirical_agent_to_fit),
+    N_features        = 5L,
+    y                 = as.integer(empirical_agent_to_fit$response_danger),
+    obs               = as.matrix(empirical_agent_to_fit[, c("feature1", "feature2", "feature3", "feature4", "feature5")]),
+    cat_feedback      = as.integer(empirical_agent_to_fit$dangerous),
+    prior_w_alpha     = c(1, 1, 1, 1, 1),
+    prior_log_c_mu    = LOG_C_PRIOR_MEAN,
+    prior_log_c_sigma = LOG_C_PRIOR_SD,
+    prior_bias_alpha  = 1,
+    prior_bias_beta   = 1,
+    run_diagnostics   = 1L
+  )
+
+  empirical_fit_filepath_single <- here("advanced_cognitive_modeling/Assignment_4/simmodels", "empirical_gcm_single_fit.rds")
+
+  if (regenerate_simulations || !file.exists(empirical_fit_filepath_single)) {
+    empirical_pf_single <- tryCatch(
+      mod_gcm_single$pathfinder(
+        data      = empirical_gcm_data_single,
+        seed      = 123,
+        num_paths = 4,
+        refresh   = 0
+      ),
+      error = function(e) {
+        message("Pathfinder failed — falling back to default initialisation.")
+        NULL
+      }
+    )
+  
+    empirical_fit_gcm_single <- mod_gcm_single$sample(
+      data            = empirical_gcm_data_single,
+      init            = empirical_pf_single,
+      seed            = 123,
+      chains          = 4,
+      parallel_chains = min(4, availableCores()),
+      iter_warmup     = 1000,
+      iter_sampling   = 1500,
+      refresh         = 300,
+      adapt_delta     = 0.9
+    )
+    empirical_fit_gcm_single$save_object(empirical_fit_filepath_single)
+    cat("Single-agent model fitted and saved.\n")
+  } else {
+    empirical_fit_gcm_single <- readRDS(empirical_fit_filepath_single)
+    cat("Loaded existing single-agent fit.\n")
+  }
+```
+
 
 ```{r}
 # Select one simulated agent: w ≈ (0.9, 0.1), c ≈ 2
@@ -970,31 +905,29 @@ if (!is.null(empirical_fit_gcm_single)) {
 
 *Note: * Vi er nået hertil.
 
+
 ```{r}
 if (!is.null(empirical_fit_gcm_single)) {
   draws_df <- as_draws_df(
     empirical_fit_gcm_single$draws(variables = c("w[1]", "w[2]", "w[3]", "w[4]", "w[5]", "log_c", "c", "bias"))
   )
 
-  true_w1    <- agent_to_fit$w1_true[1]
-  true_w2    <- agent_to_fit$w2_true[1]
-  true_w3    <- agent_to_fit$w3_true[1]
-  true_w4    <- agent_to_fit$w4_true[1]
-  true_w5    <- agent_to_fit$w5_true[1]
-  true_log_c <- agent_to_fit$log_c_true[1]
-  true_c     <- agent_to_fit$c_true[1]
-  true_bias  <- agent_to_fit$bias_true[1]
 
   set.seed(2026)
   n_prior <- 4000
   prior_df <- tibble(
-    `w[1]` = runif(n_prior),
+    w_prior = rdirichlet(n_prior, c(1,1,1,1,1)),
+    `w[1]` = w_prior[,1],
+    `w[2]` = w_prior[,2],
+    `w[3]` = w_prior[,3],
+    `w[4]` = w_prior[,4],
+    `w[5]` = w_prior[,5],
     log_c  = rnorm(n_prior, LOG_C_PRIOR_MEAN, LOG_C_PRIOR_SD),
     c      = exp(log_c),
     bias   = rbeta(n_prior, 1, 1)
   )
 
-  pp_panel <- function(prior_x, post_x, true_val, label) {
+  pp_panel <- function(prior_x, post_x, label) {
     tibble(
       x      = c(prior_x, post_x),
       source = c(rep("Prior", length(prior_x)),
@@ -1002,31 +935,26 @@ if (!is.null(empirical_fit_gcm_single)) {
     ) |>
       ggplot(aes(x = x, fill = source, color = source)) +
       geom_density(alpha = 0.4, linewidth = 0.5) +
-      geom_vline(xintercept = true_val, color = "red",
-                 linetype = "dashed", linewidth = 0.7) +
       scale_fill_manual(values = c(Prior = "grey60", Posterior = "#0072B2")) +
       scale_color_manual(values = c(Prior = "grey40", Posterior = "#0072B2")) +
       labs(title = label, x = NULL, y = "Density") +
       theme(legend.position = "bottom")
   }
 
-  p1_1 <- pp_panel(prior_df$`w[1]`, draws_df$`w[1]`, true_w1, "w[1]")
-  p1_2 <- pp_panel(prior_df$`w[1]`, draws_df$`w[2]`, true_w2, "w[2]")
-  p1_3 <- pp_panel(prior_df$`w[1]`, draws_df$`w[3]`, true_w3, "w[3]")
-  p1_4 <- pp_panel(prior_df$`w[1]`, draws_df$`w[4]`, true_w4, "w[4]")
-  p1_5 <- pp_panel(prior_df$`w[1]`, draws_df$`w[5]`, true_w5, "w[5]")
-  p2 <- pp_panel(prior_df$log_c,  draws_df$log_c,  true_log_c, "log(c) — computational scale")
-  p3 <- pp_panel(prior_df$c,      draws_df$c,      true_c,     "c — natural scale")
-  p4 <- pp_panel(prior_df$bias,   draws_df$bias,   true_bias,  "bias")
+  p1_1 <- pp_panel(prior_df$`w[1]`, draws_df$`w[1]`, "w[1]")
+  p1_2 <- pp_panel(prior_df$`w[1]`, draws_df$`w[2]`, "w[2]")
+  p1_3 <- pp_panel(prior_df$`w[1]`, draws_df$`w[3]`, "w[3]")
+  p1_4 <- pp_panel(prior_df$`w[1]`, draws_df$`w[4]`, "w[4]")
+  p1_5 <- pp_panel(prior_df$`w[1]`, draws_df$`w[5]`, "w[5]")
+  p2 <- pp_panel(prior_df$log_c,  draws_df$log_c, "log(c) — computational scale")
+  p3 <- pp_panel(prior_df$c,      draws_df$c,     "c — natural scale")
+  p4 <- pp_panel(prior_df$bias,   draws_df$bias,  "bias")
 
-p1_1
-p1_2
-p1_3
-p1_4
-p1_5
-p2
-p3
-p4
+wrap_plots(
+  p1_1, p1_2, p1_3, p1_4, 
+  p1_5, p2, p3, p4,
+  ncol = 4
+)
 
 }
 ```
