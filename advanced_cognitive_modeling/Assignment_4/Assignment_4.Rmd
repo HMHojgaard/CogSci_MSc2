@@ -21,7 +21,8 @@ pacman::p_load(
   furrr,        # Parallel processing
   future,       # Future backend
   here,
-  loo
+  loo,
+  patchwork
 )
 ```
 
@@ -661,16 +662,27 @@ if (!is.null(fit_gcm_single)) {
   p3 <- pp_panel(prior_df$c,      draws_df$c,      true_c,     "c — natural scale")
   p4 <- pp_panel(prior_df$bias,   draws_df$bias,   true_bias,  "bias")
 
-p1_1
-p1_2
-p1_3
-p1_4
-p1_5
-p2
-p3
-p4
+# p1_1
+# p1_2
+# p1_3
+# p1_4
+# p1_5
+# p2
+# p3
+# p4
 
-}
+# One of these might work :)))))
+(p1_1 | p1_2 | p1_3) /
+(p1_4 | p1_5 | p2) /ss
+(p3   | p4)
+
+wrap_plots(
+  p1_1, p1_2, p1_3,
+  p1_4, p1_5, p2,
+  p3, p4,
+  ncol = 3
+)
+
 ```
 ## Joint posterior geometry
 
