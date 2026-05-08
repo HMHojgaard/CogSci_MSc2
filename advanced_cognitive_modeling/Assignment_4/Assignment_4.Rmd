@@ -722,7 +722,7 @@ if (!is.null(fit_gcm_single)) {
 # prepare list for all fits
 results_df <- list()
 
-for (id in df$subject){
+for (id in unique(df$subject)){
   # for each participant in df
   empirical_agent_to_fit <- df |>
     filter(
@@ -792,63 +792,14 @@ for (id in df$subject){
 
 
 ```{r}
-# Select one simulated agent: w ≈ (0.9, 0.1), c ≈ 2
-empirical_agent_to_fit <- df |>
-  filter(
-    subject == 1
-  )
-
-empirical_gcm_data_single <- list(
-  N_total           = nrow(empirical_agent_to_fit),
-  N_features        = 5L,
-  y                 = as.integer(empirical_agent_to_fit$response_danger),
-  obs               = as.matrix(empirical_agent_to_fit[, c("feature1", "feature2", "feature3", "feature4", "feature5")]),
-  cat_feedback      = as.integer(empirical_agent_to_fit$dangerous),
-  prior_w_alpha     = c(1, 1, 1, 1, 1),
-  prior_log_c_mu    = LOG_C_PRIOR_MEAN,
-  prior_log_c_sigma = LOG_C_PRIOR_SD,
-  prior_bias_alpha  = 1,
-  prior_bias_beta   = 1,
-  run_diagnostics   = 1L
-)
-
-empirical_fit_filepath_single <- here("advanced_cognitive_modeling/Assignment_4/simmodels", "empirical_gcm_single_fit.rds")
-
-if (regenerate_simulations || !file.exists(empirical_fit_filepath_single)) {
-  empirical_pf_single <- tryCatch(
-    mod_gcm_single$pathfinder(
-      data      = empirical_gcm_data_single,
-      seed      = 123,
-      num_paths = 4,
-      refresh   = 0
-    ),
-    error = function(e) {
-      message("Pathfinder failed — falling back to default initialisation.")
-      NULL
-    }
-  )
-
-  empirical_fit_gcm_single <- mod_gcm_single$sample(
-    data            = empirical_gcm_data_single,
-    init            = empirical_pf_single,
-    seed            = 123,
-    chains          = 4,
-    parallel_chains = min(4, availableCores()),
-    iter_warmup     = 1000,
-    iter_sampling   = 1500,
-    refresh         = 300,
-    adapt_delta     = 0.9
-  )
-  empirical_fit_gcm_single$save_object(empirical_fit_filepath_single)
-  cat("Single-agent model fitted and saved.\n")
-} else {
-  empirical_fit_gcm_single <- readRDS(empirical_fit_filepath_single)
-  cat("Loaded existing single-agent fit.\n")
+for (id in results_df) {
+  check_diagnostics(id, "simulated single agent fit for id")
 }
 ```
 ## Diagnostics
 
 ```{r}
+empirical_fit_gcm_single <- results_df[1]
 empirical_fit_gcm_single$summary()
 ```
 
