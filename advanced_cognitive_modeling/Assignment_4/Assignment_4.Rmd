@@ -716,29 +716,20 @@ if (!is.null(fit_gcm_single)) {
 
 ## Fitting model to empirical data
 
-*Note: * We are supposed to fit the model by participant, how do we do that? - do we need to do the quality check 
+*Note: * Do we need to do the prior predictive check - wont it be identical to the similated one? Do we need quality checks for all 27 participants?
+
 ```{r}
+# prepare list for all fits
+results_df <- list()
+
 for (id in df$subject){
+  # for each participant in df
   empirical_agent_to_fit <- df |>
     filter(
       subject == id
     )
   
-  fit
-  
-  save summary
-}
-```
-
-
-
-```{r}
-for (id in ????){
-  empirical_agent_to_fit <- df |>
-    filter(
-      subject == 1
-    )
-
+  # prepare data fit
   empirical_gcm_data_single <- list(
     N_total           = nrow(empirical_agent_to_fit),
     N_features        = 5L,
@@ -752,9 +743,13 @@ for (id in ????){
     prior_bias_beta   = 1,
     run_diagnostics   = 1L
   )
+  
+  # define save path
+  empirical_fit_filepath_single <- here("advanced_cognitive_modeling/Assignment_4/simmodels", 
+                                        paste0("empirical_gcm_single_fit_", id, ".rds")
+                                        )
 
-  empirical_fit_filepath_single <- here("advanced_cognitive_modeling/Assignment_4/simmodels", "empirical_gcm_single_fit.rds")
-
+  # fit model
   if (regenerate_simulations || !file.exists(empirical_fit_filepath_single)) {
     empirical_pf_single <- tryCatch(
       mod_gcm_single$pathfinder(
@@ -781,11 +776,18 @@ for (id in ????){
       adapt_delta     = 0.9
     )
     empirical_fit_gcm_single$save_object(empirical_fit_filepath_single)
-    cat("Single-agent model fitted and saved.\n")
+    
+    # print status
+    cat(paste0("Single-agent model for ", id, " fitted and saved.\n"))
   } else {
+    
+    # or load from file
     empirical_fit_gcm_single <- readRDS(empirical_fit_filepath_single)
     cat("Loaded existing single-agent fit.\n")
   }
+  
+  results_df[[id]] <- empirical_fit_gcm_single
+}
 ```
 
 
