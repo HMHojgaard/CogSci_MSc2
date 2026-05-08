@@ -35,6 +35,71 @@ head(df)
 names(df)
 ```
 
+```{r}
+df <- df %>% 
+  filter(test != 1)
+
+```
+
+```{r}
+df %>% 
+  stimulus_int <- stimulus 
+```
+
+```{r}
+# City-block distance (r = 1), attention-weighted
+distance <- function(vect1, vect2, w) {
+  sum(w * abs(vect1 - vect2))
+}
+```
+
+```{r}
+# Exponential similarity kernel
+similarity <- function(dist_val, c) {
+  exp(-c * dist_val)
+}
+```
+
+```{r}
+dd <- expand_grid(
+  distance  = seq(0, 6, by = 0.1),
+  c         = c(0.3, 0.7, 1.5, 3.0, 6.0, 10.0)
+) |>
+  mutate(
+    sim     = similarity(distance, c),
+    c_label = factor(c)
+  )
+
+ggplot(dd, aes(x = distance, y = sim, color = c_label, group = c_label)) +
+  geom_line(linewidth = 1) +
+  scale_color_viridis_d(option = "plasma", name = "Sensitivity (c)") +
+  labs(
+    title    = "Effect of Sensitivity Parameter (c) on Similarity",
+    subtitle = "c is on the natural (original) scale; prior places most mass on c ∈ (0.3, 15)",
+    x        = "Psychological Distance",
+    y        = "Similarity"
+  ) +
+  theme(legend.position = "bottom")
+```
+
+```{r}
+# Toy demonstration of the summed-vs-mean choice with deliberately
+# unbalanced memory contents. 12 cat-A exemplars far away, 1 cat-B
+# exemplar close by. We show choice probabilities under both forms.
+demo_memory <- tibble(
+  category = c(rep(0, 12), 1),
+  sim      = c(rep(exp(-2), 12), exp(-0.2))  # pre-computed for c = 1
+)
+demo_sums <- demo_memory |>
+  group_by(category) |>
+  summarise(sum_sim = sum(sim), mean_sim = mean(sim), .groups = "drop")
+demo_sums |>
+  mutate(
+    p_cat1_summed = sum_sim  / sum(sum_sim),
+    p_cat1_mean   = mean_sim / sum(mean_sim)
+  ) |>
+  print()
+```
 
 
 
@@ -96,10 +161,130 @@ gcm_simulate <- function(w,            # attention weights (sums to 1)
 
 
 
+```{r}
+make_subject_schedule <- function(stimulus_info, n_blocks, seed) {
+  set.seed(seed)
+  n_stim <- nrow(stimulus_info)
+
+  sequence <- unlist(lapply(seq_len(n_blocks), function(b) {
+    sample(stimulus_info$stimulus, n_stim, replace = FALSE)
+  }))
+
+  tibble(
+    trial_within_subject = seq_along(sequence),
+    block                = rep(seq_len(n_blocks), each = n_stim),
+    stimulus_id          = sequence
+  ) |>
+    left_join(stimulus_info, by = c("stimulus_id" = "stimulus")) |>
+    rename(category_feedback = category_true) |>
+    dplyr::select(trial_within_subject, block, stimulus_id,
+                  height, position, category_feedback)
+}
+```
 
 
+```{r}
+simulate_gcm_agent <- function(agent_id, w_true, c_true, bias_true,
+                               stimulus_info, n_blocks, subject_seed) {
+  schedule <- make_subject_schedule(stimulus_info, n_blocks, seed = subject_seed)
+  obs      <- schedule |> dplyr::select(height, position)
+  feedback <- schedule$category_feedback
+
+  sim_results <- gcm_simulate(
+    w = w_true, c = c_true, bias = bias_true,
+    obs = obs, cat_feedback = feedback, quiet = TRUE
+  )
+
+  schedule |>
+    mutate(
+      agent_id     = agent_id,
+      w1_true      = w_true[1],
+      w2_true      = w_true[2],
+      c_true       = c_true,
+      log_c_true   = log(c_true),
+      bias_true    = bias_true,
+      prob_cat1    = sim_results$prob_cat1,
+      sim_response = sim_results$sim_response,
+      correct      = as.integer(category_feedback == sim_response)
+    ) |>
+    group_by(agent_id) |>
+    mutate(performance = cumsum(correct) / row_number()) |>
+    ungroup()
+}
+```
+
+```{r}
+regenerate_simulations <- TRUE
+```
 
 
+```{r}
+stimulus_info <- tibble(
+  stimulus      = c(5, 3, 7, 1, 8, 2, 6, 4),
+  height        = c(1, 1, 2, 2, 3, 3, 4, 4),
+  position      = c(2, 3, 1, 4, 1, 4, 2, 3),
+  category_true = c(0, 0, 1, 0, 1, 0, 1, 1)
+)
+
+ggplot(stimulus_info, aes(x = position, y = height,
+                          color = factor(category_true), label = stimulus)) +
+  geom_point(size = 5) +
+  geom_text(nudge_y = 0.18) +
+  scale_color_manual(values = c("0" = "#0072B2", "1" = "#D55E00"), name = "Category") +
+  labs(title = "@kruschke1993human Stimulus Structure", x = "Position", y = "Height") +
+  coord_fixed()
+```
+```{r}
+n_blocks         <- 8
+n_stim_per_block <- nrow(stimulus_info)
+total_trials     <- n_blocks * n_stim_per_block
+```
 
 
+```{r}
+param_grid <- expand_grid(
+  w_setting    = list(c(0.5, 0.5), c(0.7, 0.3), c(0.9, 0.1)),
+  c_setting    = c(0.5, 1.0, 2.0, 4.0, 5.0, 15.0),
+  bias_setting = 0.5
+) |>
+  mutate(
+    setting_id = row_number(),
+    w_label    = map_chr(w_setting, ~paste(round(.x, 1), collapse = ",")),
+    c_label    = paste0("c≈", round(c_setting, 1)),
+    label      = paste0("w=(", w_label, "), ", c_label)
+  )
+
+n_agents_per_setting <- 5
+
+simulation_plan <- param_grid |>
+  uncount(n_agents_per_setting) |>
+  mutate(agent_id = row_number())
+
+sim_file <- here("advanced_cognitive_modeling/Assignment_4/simdata", "ch12_gcm_simulated_responses.csv")
+
+if (regenerate_simulations || !file.exists(sim_file)) {
+  plan(multisession, workers = max(1, availableCores() - 1))
+
+  simulated_responses <- future_pmap_dfr(
+    list(
+      agent_id  = simulation_plan$agent_id,
+      w_true    = simulation_plan$w_setting,
+      c_true    = simulation_plan$c_setting,
+      bias_true = simulation_plan$bias_setting
+    ),
+    simulate_gcm_agent,
+    stimulus_info = stimulus_info,
+    n_blocks      = n_blocks,
+    subject_seed  = simulation_plan$agent_id,
+    .options = furrr_options(seed = TRUE)
+  )
+
+  plan(sequential)
+  write_csv(simulated_responses, sim_file)
+  cat("Simulation complete. Results saved.\n")
+} else {
+  simulated_responses <- read_csv(sim_file, show_col_types = FALSE)
+  cat("Loaded existing simulation results.\n")
+}
+```
 
