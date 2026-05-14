@@ -1,7 +1,7 @@
 ---
-title: "Assignment 3 - Aliens"
+title: "Assignment 4 - Aliens"
 author: "Study Group 6"
-date: "2026-04-30"
+date: "2026-05-14"
 output: html_document
 ---
 
@@ -202,7 +202,7 @@ regenerate_simulations = TRUE
 
 ```{r}
 param_grid <- expand_grid(
-  w_setting    = list(c(0.2, 0.2, 0.2, 0.2, 0.2), c(0.1, 0.1, 0.1, 0.6, 0.1), c(0.25, 0.25, 0.25, 0.05, 0.2)), # 3 scenarios
+  w_setting    = list(c(0.2, 0.2, 0.2, 0.2, 0.2), c(0.1, 0.1, 0.1, 0.6, 0.1), c(0.35, 0.1, 0.35, 0.1, 0.1)), # 3 scenarios
   c_setting    = c(0.5, 1.0, 2.0, 4.0, 5.0, 15.0), # 6 scenarios
   bias_setting = 0.5
 ) |>
@@ -494,10 +494,10 @@ mod_gcm_single <- cmdstan_model(stan_file_gcm_single)
 ```
 
 ```{r}
-# Select one simulated agent: w ≈ (0.9, 0.1), c ≈ 2
+# Select one simulated agent
 agent_to_fit <- simulated_responses |>
   filter(
-    round(w4_true, 1) == 0.2,
+    round(w3_true, 2) == 0.35,
     abs(log_c_true - log(2.0)) == min(abs(log_c_true - log(2.0)))
   ) |>
   filter(agent_id == min(agent_id)) |>
@@ -522,22 +522,8 @@ gcm_data_single <- list(
 fit_filepath_single <- here("advanced_cognitive_modeling/Assignment_4/simmodels", "ch12_gcm_single_fit.rds")
 
 if (regenerate_simulations || !file.exists(fit_filepath_single)) {
-#  pf_single <- tryCatch(
- #   mod_gcm_single$pathfinder(
-  #    data      = gcm_data_single,
-   #   seed      = 123,
-    #  num_paths = 4,
-     # refresh   = 0
-#    ),
- #   error = function(e) {
-  #    message("Pathfinder failed — falling back to default initialisation.")
-   #   NULL
-    #}
-#  )
-
   fit_gcm_single <- mod_gcm_single$sample(
     data            = gcm_data_single,
-    #init            = pf_single,
     seed            = 123,
     chains          = 4,
     parallel_chains = min(4, availableCores()),
@@ -622,7 +608,7 @@ if (!is.null(fit_gcm_single)) {
     geom_line(aes(y = obs), color = "#D55E00", linewidth = 1) +
     scale_y_continuous(limits = c(0, 1)) +
     labs(
-      title    = "Posterior Predictive Check: Cumulative Accuracy",
+      title    = "Simulated Posterior Predictive Check: Cumulative Accuracy",
       subtitle = "Blue ribbons: 50% and 90% posterior predictive intervals\nOrange line: observed cumulative accuracy",
       x = "Trial", y = "Cumulative Accuracy"
     )
@@ -750,7 +736,7 @@ for (id in unique(df$subject)){
                                         )
 
   # fit model
-  if (regenerate_simulations || !file.exists(empirical_fit_filepath_single)) {
+  if (!file.exists(empirical_fit_filepath_single)) {
     empirical_pf_single <- tryCatch(
       mod_gcm_single$pathfinder(
         data      = empirical_gcm_data_single,
@@ -778,12 +764,12 @@ for (id in unique(df$subject)){
     empirical_fit_gcm_single$save_object(empirical_fit_filepath_single)
     
     # print status
-    cat(paste0("Single-agent model for ", id, " fitted and saved.\n"))
+    cat(paste0("Single-agent model for id ", id, " fitted and saved.\n"))
   } else {
     
     # or load from file
     empirical_fit_gcm_single <- readRDS(empirical_fit_filepath_single)
-    cat("Loaded existing single-agent fit.\n")
+    cat(paste0("Loaded existing single-agent model for id ", id, "\n"))
   }
   
   results_df[[id]] <- empirical_fit_gcm_single
@@ -798,8 +784,11 @@ for (id in results_df) {
 ```
 ## Diagnostics
 
+
 ```{r}
-empirical_fit_gcm_single <- results_df[1]
+# choose example agent to plot
+example_agent <- 12
+empirical_fit_gcm_single <- results_df[example_agent][[1]]
 empirical_fit_gcm_single$summary()
 ```
 
@@ -815,6 +804,13 @@ bayesplot::mcmc_rank_overlay(
 ```
 
 ## Posterior Predictive check
+
+```{r}
+# filter to participant one
+empirical_agent_to_fit <- df |>
+    filter(subject == example_agent)
+```
+
 
 ```{r}
 if (!is.null(empirical_fit_gcm_single)) {
@@ -848,7 +844,7 @@ if (!is.null(empirical_fit_gcm_single)) {
     geom_line(aes(y = obs), color = "#D55E00", linewidth = 1) +
     scale_y_continuous(limits = c(0, 1)) +
     labs(
-      title    = "Empirical Posterior Predictive Check: Cumulative Accuracy",
+      title    = "Subject 12 Empirical Posterior Predictive Check: Cumulative Accuracy",
       subtitle = "Blue ribbons: 50% and 90% posterior predictive intervals\nOrange line: observed cumulative accuracy",
       x = "Trial", y = "Cumulative Accuracy"
     )
@@ -904,11 +900,25 @@ if (!is.null(empirical_fit_gcm_single)) {
   p4 <- pp_panel(prior_df$bias,   draws_df$bias,  "bias")
 
 wrap_plots(
-  p1_1, p1_2, p1_3, p1_4, 
-  p1_5, p2, p3, p4,
+  p1_1, p1_2, 
+  p1_3, p1_4, 
+  p1_5, p2,
+  p3, p4,
   ncol = 4
 )
 
+}
+```
+## LOO
+
+```{r}
+if (!is.null(empirical_fit_gcm_single)) {
+  log_lik_mat    <- empirical_fit_gcm_single$draws("log_lik", format = "matrix")
+  loo_gcm_single <- loo::loo(log_lik_mat, cores = 4)
+  print(loo_gcm_single)
+
+  plot(loo_gcm_single, label_points = TRUE,
+       main = "PSIS-LOO Pareto-k diagnostics: Subject 12 GCM")
 }
 ```
 
